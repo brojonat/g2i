@@ -1,0 +1,7 @@
+.env
+bin/
+logs/
+.vscode/
+.idea/
+.DS_Store
+prompts.yaml

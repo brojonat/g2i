@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    {{if .RedirectURL}}
+    <meta
+      http-equiv="refresh"
+      content="{{.RedirectTimeout}};url={{.RedirectURL}}"
+    />
+    {{end}}
+    <title>{{.Title}} - GitHub Profile Visualizer</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/htmx.org/dist/ext/json-enc.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      [x-cloak] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-50 min-h-screen">
+    <nav class="bg-white shadow-sm border-b">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex justify-between h-16">
+          <div class="flex items-center">
+            <a href="/" class="text-xl font-bold text-gray-900"
+              >GitHub Profile Visualizer</a
+            >
+          </div>
+        </div>
+      </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+      {{template "content" .}}
+    </main>
+
+    {{if .RedirectURL}}
+    <script>
+      (function () {
+        var countdownElement = document.getElementById("countdown");
+        if (!countdownElement) return;
+
+        var seconds = parseInt(countdownElement.textContent, 10);
+        var redirectUrl = "{{.RedirectURL}}";
+
+        var interval = setInterval(function () {
+          seconds--;
+          countdownElement.textContent = seconds;
+          if (seconds <= 0) {
+            clearInterval(interval);
+            window.location.href = redirectUrl;
+          }
+        }, 1000);
+      })();
+    </script>
+    {{end}}
+
+    <footer class="bg-white border-t mt-12"></footer>
+  </body>
+</html>
