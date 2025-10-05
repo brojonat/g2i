@@ -1,11 +1,11 @@
 {{define "content"}}
 <div class="px-4 py-6 sm:px-0">
   <div class="max-w-2xl mx-auto">
-    <div class="bg-red-50 border border-red-200 rounded-lg p-6">
+    <div class="error-container">
       <div class="flex">
         <div class="flex-shrink-0">
           <svg
-            class="h-5 w-5 text-red-400"
+            class="h-6 w-6 text-red-500"
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 20 20"
             fill="currentColor"
@@ -17,26 +17,25 @@
             ></path>
           </svg>
         </div>
-        <div class="ml-3">
-          <h3 class="text-sm font-medium text-red-800">Error</h3>
-          <div class="mt-2 text-sm text-red-700">
+        <div class="ml-4">
+          <h3 class="text-lg font-medium">Error</h3>
+          <div class="mt-2 text-base">
             <p>{{.error}}</p>
           </div>
           {{if .RedirectURL}}
-          <div class="mt-2 text-sm text-gray-500">
+          <div class="mt-2 text-base">
             You will be redirected to the
-            <a
-              href="{{.RedirectURL}}"
-              class="font-medium text-indigo-600 hover:text-indigo-500"
+            <a href="{{.RedirectURL}}" class="font-medium hover:underline"
               >home page</a
             >
-            in <span id="countdown">{{.RedirectTimeout}}</span> seconds.
+            in
+            <span id="countdown" class="error-countdown-text"
+              >{{.RedirectTimeout}}</span
+            ><span class="error-countdown-text"> seconds.</span>
           </div>
           {{end}}
           <div class="mt-4">
-            <a href="/" class="text-sm text-red-600 hover:text-red-500"
-              >← Back to Home</a
-            >
+            <a href="/" class="hover:underline">← Back to Home</a>
           </div>
         </div>
       </div>

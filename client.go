@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 )
 
@@ -45,6 +46,15 @@ func QueryWorkflowState(c client.Client, workflowID string) (WorkflowState, erro
 		return WorkflowState{}, fmt.Errorf("failed to decode workflow state: %w", err)
 	}
 	return state, nil
+}
+
+// GetWorkflowDescription gets the description of a workflow execution.
+func GetWorkflowDescription(c client.Client, workflowID string) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	desc, err := c.DescribeWorkflowExecution(context.Background(), workflowID, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe workflow: %w", err)
+	}
+	return desc, nil
 }
 
 // Example usage function

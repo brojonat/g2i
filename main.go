@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"flag"
+
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
@@ -26,6 +28,14 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "worker":
+			workerCmd := flag.NewFlagSet("worker", flag.ExitOnError)
+			checkConnection := workerCmd.Bool("check-connection", false, "check temporal connection and exit")
+			workerCmd.Parse(os.Args[2:])
+
+			if *checkConnection {
+				checkTemporalConnection(ctx)
+				return
+			}
 			runWorker(ctx, nil)
 		case "server":
 			runServer(ctx, stop, nil)
@@ -60,8 +70,8 @@ func runWorker(ctx context.Context, wg *sync.WaitGroup) {
 
 	// Register workflows and activities
 	w.RegisterWorkflow(RunContentGenerationWorkflow)
-	w.RegisterActivity(ScrapeGitHubProfile)
-	w.RegisterActivity(GeneratePrompt)
+	w.RegisterActivity(AgenticScrapeGitHubProfile)
+	w.RegisterActivity(GenerateContentGenerationPrompt)
 	w.RegisterActivity(GenerateContent)
 	w.RegisterActivity(StoreContent)
 
@@ -118,14 +128,34 @@ func runServer(ctx context.Context, stop context.CancelFunc, wg *sync.WaitGroup)
 	stdlog.Println("Server exiting")
 }
 
+func checkTemporalConnection(ctx context.Context) {
+	stdlog.Println("Checking Temporal connection...")
+	c := newTemporalClient()
+	defer c.Close()
+
+	// Use CheckHealth for a more robust connection check
+	healthCtx, cancel := context.WithTimeout(ctx, 5*time.Second) // 5s timeout for the check
+	defer cancel()
+	_, err := c.CheckHealth(healthCtx, &client.CheckHealthRequest{})
+	if err != nil {
+		stdlog.Fatalf("Temporal health check failed: %v", err)
+	}
+
+	stdlog.Println("Temporal connection health check successful.")
+}
+
 func newTemporalClient() client.Client {
 	var c client.Client
 	var err error
 
 	// Configure a logger for the Temporal client
 	temporalLogger := log.NewStructuredLogger(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	hostPort := os.Getenv("TEMPORAL_HOST")
+	if hostPort == "" {
+		hostPort = "localhost:7233"
+	}
 	clientOptions := client.Options{
-		HostPort:  "localhost:7233",
+		HostPort:  hostPort,
 		Namespace: "default",
 		Logger:    temporalLogger,
 	}

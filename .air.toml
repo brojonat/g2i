@@ -3,13 +3,13 @@ root = "."
 tmp_dir = "bin"
 
 [build]
-cmd = "go build -gcflags=\"all=-N -l\" -o ./bin/app ." 
+cmd = "go build -gcflags=\"all=-N -l\" -o ./bin/app ."
 delay = 1000 # In milliseconds
-exclude_dir = ["bin"] 
-full_bin = "sh -c 'source .env && ./bin/app'" 
-include_ext = ["go", "html"] 
+exclude_dir = ["bin"]
+full_bin = "sh -c 'source .env.dev && ./bin/app'"
+include_ext = ["go", "html"]
 kill_delay = 6000 # In milliseconds
-stop_on_error = true 
+stop_on_error = true
 
 [log]
 time = true

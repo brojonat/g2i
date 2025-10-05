@@ -1,17 +1,23 @@
 package main
 
 import (
+	"embed"
 	"encoding/base64"
 	"html/template"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/gommon/log"
 	"go.temporal.io/sdk/client"
 )
+
+//go:embed all:static
+var staticFS embed.FS
 
 // TemplateRenderer is a custom html/template renderer for Echo framework
 type TemplateRenderer struct {
@@ -125,14 +131,14 @@ func (s *APIServer) StartContentGeneration(c echo.Context) error {
 // GetWorkflowStatus handles GET /workflow/:id/status
 func (s *APIServer) GetWorkflowStatus(c echo.Context) error {
 	workflowID := c.Param("id")
-	c.Logger().Infof("Checking status for workflow ID: %s", workflowID)
+	c.Logger().Debugf("Checking status for workflow ID: %s", workflowID)
 
 	state, err := QueryWorkflowState(s.temporalClient, workflowID)
 	if err != nil {
 		c.Logger().Errorf("Error getting workflow result for ID %s: %v", workflowID, err)
 		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
 	}
-	c.Logger().Infof("Successfully retrieved status for workflow ID %s", workflowID)
+	c.Logger().Debugf("Successfully retrieved status for workflow ID %s", workflowID)
 
 	if state.Completed {
 		c.Response().Header().Set("HX-Retarget", "#workflow-status")
@@ -144,9 +150,25 @@ func (s *APIServer) GetWorkflowStatus(c echo.Context) error {
 // SetupRoutes sets up the API routes
 func (s *APIServer) SetupRoutes() *echo.Echo {
 	e := echo.New()
+	e.Logger.SetLevel(log.INFO)
+
+	// Serve static files
+	e.GET("/static/*", echo.WrapHandler(http.FileServer(http.FS(staticFS))))
 
 	// Middleware
-	e.Use(middleware.Logger())
+	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
+		Skipper: func(c echo.Context) bool {
+			path := c.Request().URL.Path
+			// Skip logging for status polling and other noisy endpoints
+			if strings.HasPrefix(path, "/workflow/") && strings.HasSuffix(path, "/status") {
+				return true
+			}
+			if path == "/.well-known/appspecific/com.chrome.devtools.json" {
+				return true
+			}
+			return false
+		},
+	}))
 	e.Use(middleware.Recover())
 
 	// Setup template engine
@@ -154,6 +176,7 @@ func (s *APIServer) SetupRoutes() *echo.Echo {
 
 	// Home page
 	e.GET("/", s.HomePage)
+	e.GET("/ping", s.Ping)
 
 	// Workflow routes
 	e.POST("/generate", s.StartContentGeneration)
@@ -167,14 +190,19 @@ func (s *APIServer) SetupRoutes() *echo.Echo {
 // HomePage renders the home page
 func (s *APIServer) HomePage(c echo.Context) error {
 	return c.Render(http.StatusOK, "index", echo.Map{
-		"Title": "GitHub Profile Visualizer",
+		"Title": "Vibe Check",
 	})
+}
+
+// Ping is a simple health check endpoint
+func (s *APIServer) Ping(c echo.Context) error {
+	return c.String(http.StatusOK, "pong")
 }
 
 // GetWorkflowDetails renders the workflow details page
 func (s *APIServer) GetWorkflowDetails(c echo.Context) error {
 	workflowID := c.Param("id")
-	c.Logger().Infof("Getting details for workflow ID: %s", workflowID)
+	c.Logger().Debugf("Getting details for workflow ID: %s", workflowID)
 
 	// For the details page, we wait for the final result
 	result, err := GetWorkflowResult(s.temporalClient, workflowID)
@@ -189,7 +217,7 @@ func (s *APIServer) GetWorkflowDetails(c echo.Context) error {
 		Result:    result,
 	}
 
-	c.Logger().Infof("Successfully retrieved details for workflow ID %s", workflowID)
+	c.Logger().Debugf("Successfully retrieved details for workflow ID %s", workflowID)
 	return c.Render(http.StatusOK, "workflow-details", state)
 }
 
@@ -197,14 +225,11 @@ func (s *APIServer) GetWorkflowDetails(c echo.Context) error {
 func (s *APIServer) GetProfilePage(c echo.Context) error {
 	username := c.Param("username")
 	workflowID := "content-generation-" + username
-	c.Logger().Infof("Getting profile page for workflow ID: %s", workflowID)
+	c.Logger().Debugf("Getting profile page for workflow ID: %s", workflowID)
 
-	state, err := QueryWorkflowState(s.temporalClient, workflowID)
+	desc, err := GetWorkflowDescription(s.temporalClient, workflowID)
 	if err != nil {
-		// This could be a not-found error, which is expected.
-		// We'll render a page that invites the user to start the process.
-		// For now, let's return an error for simplicity.
-		c.Logger().Errorf("Error getting workflow state for ID %s: %v", workflowID, err)
+		c.Logger().Debugf("Error getting workflow description for ID %s: %v", workflowID, err)
 		return c.Render(http.StatusNotFound, "error", echo.Map{
 			"error":           "Workflow for this user not found.",
 			"RedirectURL":     "/",
@@ -212,18 +237,33 @@ func (s *APIServer) GetProfilePage(c echo.Context) error {
 		})
 	}
 
-	if state.Completed {
+	status := desc.WorkflowExecutionInfo.Status
+	c.Logger().Debugf("Workflow %s status: %s", workflowID, status)
+
+	switch status {
+	case 1: // RUNNING
+		return c.Render(http.StatusOK, "workflow-status", echo.Map{
+			"GitHubUsername": username,
+			"WorkflowID":     workflowID,
+			"Title":          "Profile for " + username,
+		})
+	case 2: // COMPLETED
+		result, err := GetWorkflowResult(s.temporalClient, workflowID)
+		if err != nil {
+			c.Logger().Errorf("Error getting workflow result for ID %s: %v", workflowID, err)
+			return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
+		}
 		return c.Render(http.StatusOK, "workflow-details", echo.Map{
 			"Title":     "Profile for " + username,
-			"Completed": state.Completed,
-			"Status":    state.Status,
-			"Result":    state.Result,
+			"Completed": true,
+			"Status":    "Completed",
+			"Result":    result,
+		})
+	default: // FAILED, CANCELED, TERMINATED, TIMED_OUT, etc.
+		return c.Render(http.StatusNotFound, "error", echo.Map{
+			"error":           "Profile generation for this user did not complete successfully.",
+			"RedirectURL":     "/",
+			"RedirectTimeout": 5,
 		})
 	}
-
-	return c.Render(http.StatusOK, "workflow-status", echo.Map{
-		"GitHubUsername": username,
-		"WorkflowID":     workflowID,
-		"Title":          "Profile for " + username,
-	})
 }

@@ -20,14 +20,14 @@ type AppInput struct {
 
 // AppOutput represents the output of the content generation workflow
 type AppOutput struct {
-	GitHubProfile   GitHubProfile `json:"github_profile"`
-	GeneratedPrompt string        `json:"generated_prompt"`
-	ContentURL      string        `json:"content_url"`
-	ImageFormat     string        `json:"image_format,omitempty"`
-	ImageWidth      int           `json:"image_width,omitempty"`
-	ImageHeight     int           `json:"image_height,omitempty"`
-	StorageURL      string        `json:"storage_url,omitempty"`
-	CreatedAt       time.Time     `json:"created_at"`
+	GitHubProfile           GitHubProfile `json:"github_profile"`
+	ContentGenerationPrompt string        `json:"content_generation_prompt"`
+	ContentURL              string        `json:"content_url"`
+	ImageFormat             string        `json:"image_format,omitempty"`
+	ImageWidth              int           `json:"image_width,omitempty"`
+	ImageHeight             int           `json:"image_height,omitempty"`
+	StorageURL              string        `json:"storage_url,omitempty"`
+	CreatedAt               time.Time     `json:"created_at"`
 }
 
 // WorkflowState represents the current state of the content generation workflow
@@ -39,19 +39,20 @@ type WorkflowState struct {
 
 // GitHubProfile represents scraped GitHub profile data
 type GitHubProfile struct {
-	Username          string            `json:"username"`
-	Bio               string            `json:"bio"`
-	Location          string            `json:"location"`
-	Website           string            `json:"website"`
-	PublicRepos       int               `json:"public_repos"`
-	OriginalRepos     int               `json:"original_repos"`
-	ForkedRepos       int               `json:"forked_repos"`
-	Languages         []string          `json:"languages"`
-	TopRepositories   []Repository      `json:"top_repositories"`
-	ContributionGraph ContributionGraph `json:"contribution_graph"`
-	ProfessionalScore float64           `json:"professional_score"`
-	SafetyFlags       []string          `json:"safety_flags"`
-	CodeSnippets      []CodeSnippet     `json:"code_snippets"`
+	Username            string            `json:"username"`
+	Bio                 string            `json:"bio"`
+	Location            string            `json:"location"`
+	Website             string            `json:"website"`
+	PublicRepos         int               `json:"public_repos"`
+	OriginalRepos       int               `json:"original_repos"`
+	ForkedRepos         int               `json:"forked_repos"`
+	Languages           []string          `json:"languages"`
+	TopRepositories     []Repository      `json:"top_repositories"`
+	ContributionGraph   ContributionGraph `json:"contribution_graph"`
+	ProfessionalScore   float64           `json:"professional_score"`
+	SafetyFlags         []string          `json:"safety_flags"`
+	CodeSnippets        []CodeSnippet     `json:"code_snippets"`
+	ProfessionalSummary string            `json:"professional_summary"`
 }
 
 // Repository represents a GitHub repository
@@ -78,4 +79,22 @@ type CodeSnippet struct {
 	FilePath   string `json:"file_path"`
 	Content    string `json:"content"`
 	Language   string `json:"language"`
+}
+
+type Tool struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  any    `json:"parameters"`
+}
+
+type ToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type GenerateResponsesTurnResult struct {
+	Assistant string     `json:"assistant"`
+	Calls     []ToolCall `json:"calls"`
+	ID        string     `json:"id"`
 }

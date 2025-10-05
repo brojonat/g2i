@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: gip-worker
+  name: gip-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gip-worker
+  template:
+    metadata:
+      labels:
+        app: gip-worker
+    spec:
+      containers:
+      - image: "{{DOCKER_REPO}}:{{GIT_COMMIT_SHA}}"
+        imagePullPolicy: Always
+        name: gip-worker
+        envFrom:
+        - secretRef:
+            name: gip-worker-secrets
+        command: ["/app"]
+        args:
+        - worker
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        readinessProbe:
+          exec:
+            command:
+            - /app
+            - worker
+            - --check-connection
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - /app
+            - worker
+            - --check-connection
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 5
+      restartPolicy: Always
+      imagePullSecrets:
+      - name: regcred

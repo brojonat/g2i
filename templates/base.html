@@ -9,7 +9,14 @@
       content="{{.RedirectTimeout}};url={{.RedirectURL}}"
     />
     {{end}}
-    <title>{{.Title}} - GitHub Profile Visualizer</title>
+    <title>{{.Title}}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/css/style.css" />
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/htmx.org/dist/ext/json-enc.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -19,13 +26,13 @@
       }
     </style>
   </head>
-  <body class="bg-gray-50 min-h-screen">
-    <nav class="bg-white shadow-sm border-b">
+  <body>
+    <nav class="shadow-sm">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex justify-between h-16">
           <div class="flex items-center">
-            <a href="/" class="text-xl font-bold text-gray-900"
-              >GitHub Profile Visualizer</a
+            <a href="/" class="text-2xl font-bold cyber-text-glow"
+              >Vibe Check</a
             >
           </div>
         </div>
@@ -57,6 +64,6 @@
     </script>
     {{end}}
 
-    <footer class="bg-white border-t mt-12"></footer>
+    <footer class="mt-12"></footer>
   </body>
 </html>

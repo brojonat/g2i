@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	"go.temporal.io/sdk/workflow"
@@ -26,32 +27,35 @@ func RunContentGenerationWorkflow(ctx workflow.Context, input AppInput) (AppOutp
 	ctx = workflow.WithActivityOptions(ctx, ao)
 
 	// Step 1: Scrape GitHub profile
-	state.Status = "Scraping GitHub profile..."
+	state.Status = "Analyzing GitHub profile..."
 	var githubProfile GitHubProfile
-	err = workflow.ExecuteActivity(ctx, ScrapeGitHubProfile, input.GitHubUsername).Get(ctx, &githubProfile)
+	agentSystemPrompt := input.ResearchAgentSystemPrompt
+	agentSystemPrompt += fmt.Sprintf("\n\nScrape the GitHub profile for %s", input.GitHubUsername)
+
+	// The agentic scrape activity can take much longer, so we'll give it a separate, longer timeout.
+	agentActivityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 15 * time.Minute,
+	}
+	agentCtx := workflow.WithActivityOptions(ctx, agentActivityOptions)
+	err = workflow.ExecuteActivity(agentCtx, AgenticScrapeGitHubProfile, agentSystemPrompt).Get(ctx, &githubProfile)
 	if err != nil {
 		logger.Error("Failed to scrape GitHub profile", "error", err)
 		return AppOutput{}, err
 	}
 
-	// Step 2: Generate prompt (skip if provided in input)
+	// Step 2: Generate content generation prompt
 	state.Status = "Generating prompt..."
-	var prompt string
-	if input.ContentPrompt != "" {
-		prompt = input.ContentPrompt
-		logger.Info("Using provided content prompt")
-	} else {
-		err = workflow.ExecuteActivity(ctx, GeneratePrompt, githubProfile, input.SystemPrompt).Get(ctx, &prompt)
-		if err != nil {
-			logger.Error("Failed to generate prompt", "error", err)
-			return AppOutput{}, err
-		}
+	var contentGenerationPrompt string
+	err = workflow.ExecuteActivity(ctx, GenerateContentGenerationPrompt, githubProfile, input.ContentGenerationSystemPrompt).Get(ctx, &contentGenerationPrompt)
+	if err != nil {
+		logger.Error("Failed to generate content generation prompt", "error", err)
+		return AppOutput{}, err
 	}
 
 	// Step 3: Generate content using frontier model
 	state.Status = "Generating image..."
 	var generationResult GenerateContentOutput
-	err = workflow.ExecuteActivity(ctx, GenerateContent, prompt, input.ModelName, input.ImageFormat, input.ImageWidth, input.ImageHeight).Get(ctx, &generationResult)
+	err = workflow.ExecuteActivity(ctx, GenerateContent, contentGenerationPrompt, input.ModelName, input.ImageFormat, input.ImageWidth, input.ImageHeight).Get(ctx, &generationResult)
 	if err != nil {
 		logger.Error("Failed to generate content", "error", err)
 		return AppOutput{}, err
@@ -67,14 +71,14 @@ func RunContentGenerationWorkflow(ctx workflow.Context, input AppInput) (AppOutp
 	}
 
 	output := AppOutput{
-		GitHubProfile:   githubProfile,
-		GeneratedPrompt: prompt,
-		ContentURL:      storageURL, // Use storage URL directly
-		ImageFormat:     input.ImageFormat,
-		ImageWidth:      input.ImageWidth,
-		ImageHeight:     input.ImageHeight,
-		StorageURL:      storageURL,
-		CreatedAt:       time.Now(),
+		GitHubProfile:           githubProfile,
+		ContentGenerationPrompt: input.ContentGenerationSystemPrompt,
+		ContentURL:              storageURL, // Use storage URL directly
+		ImageFormat:             input.ImageFormat,
+		ImageWidth:              input.ImageWidth,
+		ImageHeight:             input.ImageHeight,
+		StorageURL:              storageURL,
+		CreatedAt:               time.Now(),
 	}
 
 	state.Status = "Completed"

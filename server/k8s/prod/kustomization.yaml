@@ -1,0 +1,8 @@
+resources:
+- server.yaml
+- ingress.yaml
+
+secretGenerator:
+- name: gip-api-secrets
+  envs:
+  - ../../../.env.prod

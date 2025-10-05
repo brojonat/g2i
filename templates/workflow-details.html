@@ -10,11 +10,11 @@
     />
 
     <div id="image-error" style="display: none">
-      <div class="bg-red-50 border border-red-200 rounded-lg p-6">
+      <div class="error-container">
         <div class="flex">
           <div class="flex-shrink-0">
             <svg
-              class="h-5 w-5 text-red-400"
+              class="h-6 w-6 text-red-500"
               xmlns="http://www.w3.org/2000/svg"
               viewBox="0 0 20 20"
               fill="currentColor"
@@ -26,22 +26,20 @@
               ></path>
             </svg>
           </div>
-          <div class="ml-3">
-            <h3 class="text-sm font-medium text-red-800">Image Not Found</h3>
-            <div class="mt-2 text-sm text-red-700">
+          <div class="ml-4">
+            <h3 class="text-lg font-medium">Image Not Found</h3>
+            <div class="mt-2 text-base">
               <p>
                 The generated image could not be found. It may have been deleted
                 or there was an error during storage.
               </p>
             </div>
-            <div class="mt-2 text-sm text-gray-500">
+            <div class="mt-2 text-base">
               You will be redirected to the
-              <a
-                href="/"
-                class="font-medium text-indigo-600 hover:text-indigo-500"
-                >home page</a
-              >
-              in <span id="countdown">5</span> seconds.
+              <a href="/" class="font-medium hover:underline">home page</a>
+              in
+              <span id="countdown" class="error-countdown-text">5</span
+              ><span class="error-countdown-text"> seconds.</span>
             </div>
           </div>
         </div>

@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: gip-api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: gip-api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: gip-api
+  name: gip-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gip-api
+  template:
+    metadata:
+      labels:
+        app: gip-api
+    spec:
+      containers:
+      - image: "{{DOCKER_REPO}}:{{GIT_COMMIT_SHA}}"
+        imagePullPolicy: Always
+        name: gip-api
+        envFrom:
+        - secretRef:
+            name: gip-api-secrets
+        command: ["/app"]
+        args: ["server"]
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 20
+      restartPolicy: Always
+      imagePullSecrets:
+      - name: regcred

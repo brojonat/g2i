@@ -1,0 +1,22 @@
+# Git
+.git
+.gitignore
+
+# Docker
+.dockerignore
+Dockerfile
+
+# Binaries
+bin/
+
+# Logs
+logs/
+
+# Environment files
+.env
+.env.*
+env.example
+
+# IDE files
+.vscode/
+.idea/

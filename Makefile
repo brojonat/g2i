@@ -36,14 +36,14 @@ clean: ## Clean build artifacts
 
 # Internal target to run the app; waits for Temporal and uses air for hot-reloading.
 run-app: build
-	@if [ ! -f .env ]; then \
-		echo "Error: .env file not found. Please create one from env.example and fill in the required values."; \
+	@if [ ! -f .env.dev ]; then \
+		echo "Error: .env.dev file not found. Please create one from env.example and fill in the required values."; \
 		exit 1; \
 	fi
-	@echo "Updating prompts in .env file..."
+	@echo "Updating prompts in .env.dev file..."
 	@# Remove old prompt variables to prevent duplication
-	@grep -vE '_SYSTEM_PROMPT=' .env > .env.tmp && mv .env.tmp .env
-	@make generate-prompts >> .env
+	@grep -vE '_SYSTEM_PROMPT=' .env.dev > .env.tmp && mv .env.tmp .env.dev
+	@make generate-prompts >> .env.dev
 	@$(call setup_env, .env)
 	@echo "⏳ Waiting for Temporal frontend (port 7233) to be ready...";
 	@while ! nc -z 127.0.0.1 7233; do \
@@ -63,7 +63,7 @@ PORT_FORWARD_FRONTEND_CMD := "kubectl port-forward service/temporal-frontend 723
 dev-session: stop-dev-session start-dev-session ## Stop (if running) and start a new tmux dev session
 
 start-dev-session: build ## Start a new tmux development session
-	@$(call setup_env, .env)
+	@$(call setup_env, .env.dev)
 	@command -v tmux >/dev/null 2>&1 || { echo >&2 "tmux is not installed. Aborting."; exit 1; }
 	@command -v kubectl >/dev/null 2>&1 || { echo >&2 "kubectl is not installed. Aborting."; exit 1; }
 	@mkdir -p logs
@@ -100,6 +100,67 @@ generate-prompts: ## Generate base64-encoded prompt env vars from prompts.yaml
 		exit 1; \
 	fi
 	@yq -r 'to_entries | .[] | (.key | ascii_upcase | gsub("-";"_")) + "=" + (.value | @base64)' prompts.yaml
+
+# Deployment
+# ---------------------
+DOCKER_REPO ?= brojonat/github-to-img
+
+build-push: ## Build and push Docker image with git hash tag
+	$(eval GIT_HASH := $(shell git rev-parse --short HEAD))
+	$(eval DYNAMIC_TAG := $(DOCKER_REPO):$(GIT_HASH))
+	@echo "Building and pushing image: $(DYNAMIC_TAG)"
+	docker build -t $(DYNAMIC_TAG) .
+	docker push $(DYNAMIC_TAG)
+	@echo $(GIT_HASH) > .git_hash
+
+deploy-server: ## Deploy server to Kubernetes (prod)
+	@$(MAKE) build-push
+	$(eval GIT_HASH := $(shell cat .git_hash))
+	@echo "Applying server deployment with image: $(DOCKER_REPO):$(GIT_HASH)"
+	kustomize build --load-restrictor=LoadRestrictionsNone server/k8s/prod | \
+	sed -e "s;{{DOCKER_REPO}};$(DOCKER_REPO);g" \
+			-e "s;{{GIT_COMMIT_SHA}};$(GIT_HASH);g" | \
+			kubectl apply -f -
+
+deploy-worker: ## Deploy worker to Kubernetes (prod)
+	@$(MAKE) build-push
+	$(eval GIT_HASH := $(shell cat .git_hash))
+	@echo "Applying worker deployment with image: $(DOCKER_REPO):$(GIT_HASH)"
+	kustomize build --load-restrictor=LoadRestrictionsNone worker/k8s/prod | \
+	sed -e "s;{{DOCKER_REPO}};$(DOCKER_REPO);g" \
+			-e "s;{{GIT_COMMIT_SHA}};$(GIT_HASH);g" | \
+			kubectl apply -f -
+
+deploy-all: ## Deploy both server and worker to Kubernetes (prod)
+	@$(MAKE) deploy-server
+	@$(MAKE) deploy-worker
+
+delete-server: ## Delete server from Kubernetes (prod)
+	kustomize build --load-restrictor=LoadRestrictionsNone server/k8s/prod | kubectl delete -f -
+
+delete-worker: ## Delete worker from Kubernetes (prod)
+	kustomize build --load-restrictor=LoadRestrictionsNone worker/k8s/prod | kubectl delete -f -
+
+delete-all: ## Delete both server and worker from Kubernetes (prod)
+	@$(MAKE) delete-server
+	@$(MAKE) delete-worker
+
+logs-server: ## Tail logs for the server deployment
+	kubectl logs -f deployment/gip-api
+
+logs-worker: ## Tail logs for the worker deployment
+	kubectl logs -f deployment/gip-worker
+
+restart-server: ## Restart the server deployment
+	kubectl rollout restart deployment gip-api
+
+restart-worker: ## Restart the worker deployment
+	kubectl rollout restart deployment gip-worker
+
+update-secrets: ## Update Kubernetes secrets from .env.prod
+	kubectl create secret generic gip-api-secrets \
+		--from-env-file=.env.prod \
+		--dry-run=client -o yaml | kubectl apply -f -
 
 help: ## Show this help message
 	@echo "Available targets:"

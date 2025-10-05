@@ -1,7 +1,11 @@
-.env
+# Binaries for programs and plugins
 bin/
+
+# Log files
 logs/
+
+# Environment variables
+.env
+.env.*
+
 .vscode/
-.idea/
-.DS_Store
-prompts.yaml

@@ -1,0 +1,7 @@
+resources:
+- worker.yaml
+
+secretGenerator:
+- name: gip-worker-secrets
+  envs:
+  - ../../../.env.prod

@@ -1,11 +1,8 @@
 {{define "content"}}
-<div
-  id="workflow-status"
-  class="bg-blue-50 border border-blue-200 rounded-md p-6"
->
+<div id="workflow-status" class="status-container">
   <div class="flex items-center justify-center flex-col">
     <svg
-      class="h-8 w-8 text-blue-400 animate-spin mb-4"
+      class="h-8 w-8 text-cyan-300 animate-spin mb-4"
       xmlns="http://www.w3.org/2000/svg"
       fill="none"
       viewBox="0 0 24 24"
@@ -32,7 +29,7 @@
       hx-trigger="load, every 2s"
     >
       <div id="workflow-details">
-        <h3 class="text-lg font-medium text-gray-900 mb-4">Initializing...</h3>
+        <h3>Initializing...</h3>
       </div>
     </div>
   </div>
