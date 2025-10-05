@@ -20,21 +20,23 @@ type ObjectStorage interface {
 
 // S3CompatibleStorage implements ObjectStorage using S3-compatible storage
 type S3CompatibleStorage struct {
-	Endpoint  string
-	Region    string
-	AccessKey string
-	SecretKey string
-	UseSSL    bool
+	Endpoint       string
+	PublicEndpoint string
+	Region         string
+	AccessKey      string
+	SecretKey      string
+	UseSSL         bool
 }
 
 // NewS3CompatibleStorage creates a new S3-compatible storage instance
 func NewS3CompatibleStorage() *S3CompatibleStorage {
 	return &S3CompatibleStorage{
-		Endpoint:  os.Getenv("S3_ENDPOINT"),
-		Region:    os.Getenv("S3_REGION"),
-		AccessKey: os.Getenv("S3_ACCESS_KEY"),
-		SecretKey: os.Getenv("S3_SECRET_KEY"),
-		UseSSL:    os.Getenv("S3_USE_SSL") == "true",
+		Endpoint:       os.Getenv("S3_ENDPOINT"),
+		PublicEndpoint: os.Getenv("S3_PUBLIC_ENDPOINT"),
+		Region:         os.Getenv("S3_REGION"),
+		AccessKey:      os.Getenv("S3_ACCESS_KEY"),
+		SecretKey:      os.Getenv("S3_SECRET_KEY"),
+		UseSSL:         os.Getenv("S3_USE_SSL") == "true",
 	}
 }
 
@@ -81,7 +83,7 @@ func (s *S3CompatibleStorage) GetURL(bucket, key string) string {
 	if s.UseSSL {
 		protocol = "https"
 	}
-	return fmt.Sprintf("%s://%s/%s/%s", protocol, s.Endpoint, bucket, key)
+	return fmt.Sprintf("%s://%s/%s/%s", protocol, s.PublicEndpoint, bucket, key)
 }
 
 // S3Storage implements ObjectStorage using AWS S3
