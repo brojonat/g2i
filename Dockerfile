@@ -20,7 +20,7 @@ COPY . .
 # Build the Go app with CGO enabled
 # CGO_ENABLED=0 is important for a static binary
 # -ldflags="-w -s" strips debug information to reduce binary size
-RUN go build -ldflags="-w -s" -o /app/main .
+RUN --mount=type=cache,target=/root/.cache/go-build go build -ldflags="-w -s" -o /app/main .
 
 # Start a new stage from Alpine
 FROM alpine:latest
