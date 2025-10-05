@@ -30,7 +30,7 @@ func RunContentGenerationWorkflow(ctx workflow.Context, input AppInput) (AppOutp
 	state.Status = "Analyzing GitHub profile..."
 	var githubProfile GitHubProfile
 	agentSystemPrompt := input.ResearchAgentSystemPrompt
-	agentSystemPrompt += fmt.Sprintf("\n\nScrape the GitHub profile for %s", input.GitHubUsername)
+	agentSystemPrompt += fmt.Sprintf("\n\nScrape this info from the GitHub profile for the user: %s", input.GitHubUsername)
 
 	// The agentic scrape activity can take much longer, so we'll give it a separate, longer timeout.
 	agentActivityOptions := workflow.ActivityOptions{

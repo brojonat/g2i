@@ -366,9 +366,7 @@ func parseResponsesOutput(body []byte) (assistantText string, toolCalls []ToolCa
 // GeneratePrompt creates a "report card" prompt for content generation based on GitHub profile
 func GenerateContentGenerationPrompt(ctx context.Context, profile GitHubProfile, systemPrompt string) (string, error) {
 	// Build a comprehensive "report card" prompt that grounds the profile in cultural context
-	prompt := fmt.Sprintf(`
-Create a visual representation that grounds this developer's profile in modern cultural context. Think of this as their "report card" but make it culturally relevant and meme-worthy.
-
+	prompt := fmt.Sprintf(`%s
 **Developer Report Card:**
 - Username: %s
 - Bio: %s
@@ -395,9 +393,8 @@ Based on their profile, create a visual that puts them in modern cultural contex
 - If they're a language polyglot: "I know 20 languages" flex meme
 - If they're a minimalist: "Less is more" aesthetic meme
 - If they're a documentation enthusiast: "Read the docs" energy meme
-
-Create a visual that captures their essence as a developer through the lens of internet culture and memes. Make it relatable, funny, and culturally grounded.
 `,
+		systemPrompt,
 		profile.Username,
 		profile.Bio,
 		profile.Location,
