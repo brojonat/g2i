@@ -66,14 +66,16 @@ func runWorker(ctx context.Context, wg *sync.WaitGroup) {
 	defer c.Close()
 
 	// Create worker
-	w := worker.New(c, "content-generation-queue", worker.Options{})
+	w := worker.New(c, os.Getenv("TEMPORAL_TASK_QUEUE"), worker.Options{})
 
 	// Register workflows and activities
 	w.RegisterWorkflow(RunContentGenerationWorkflow)
-	w.RegisterActivity(AgenticScrapeGitHubProfile)
+	w.RegisterWorkflow(AgenticScrapeGitHubProfileWorkflow)
 	w.RegisterActivity(GenerateContentGenerationPrompt)
 	w.RegisterActivity(GenerateContent)
 	w.RegisterActivity(StoreContent)
+	w.RegisterActivity(ExecuteGhCommandActivity)
+	w.RegisterActivity(GenerateResponsesTurnActivity)
 
 	// Start worker
 	stdlog.Println("Starting worker...")

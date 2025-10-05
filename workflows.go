@@ -33,11 +33,11 @@ func RunContentGenerationWorkflow(ctx workflow.Context, input AppInput) (AppOutp
 	agentSystemPrompt += fmt.Sprintf("\n\nScrape this info from the GitHub profile for the user: %s", input.GitHubUsername)
 
 	// The agentic scrape activity can take much longer, so we'll give it a separate, longer timeout.
-	agentActivityOptions := workflow.ActivityOptions{
-		StartToCloseTimeout: 15 * time.Minute,
+	cwo := workflow.ChildWorkflowOptions{
+		WorkflowID: "agentic-scrape-" + input.GitHubUsername,
 	}
-	agentCtx := workflow.WithActivityOptions(ctx, agentActivityOptions)
-	err = workflow.ExecuteActivity(agentCtx, AgenticScrapeGitHubProfile, agentSystemPrompt).Get(ctx, &githubProfile)
+	childCtx := workflow.WithChildOptions(ctx, cwo)
+	err = workflow.ExecuteChildWorkflow(childCtx, AgenticScrapeGitHubProfileWorkflow, agentSystemPrompt).Get(childCtx, &githubProfile)
 	if err != nil {
 		logger.Error("Failed to scrape GitHub profile", "error", err)
 		return AppOutput{}, err

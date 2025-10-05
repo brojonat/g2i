@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
@@ -13,7 +14,7 @@ import (
 func StartWorkflow(c client.Client, input AppInput) (string, error) {
 	workflowOptions := client.StartWorkflowOptions{
 		ID:        fmt.Sprintf("content-generation-%s", input.GitHubUsername),
-		TaskQueue: "content-generation-queue",
+		TaskQueue: os.Getenv("TEMPORAL_TASK_QUEUE"),
 	}
 
 	workflowRun, err := c.ExecuteWorkflow(context.Background(), workflowOptions, RunContentGenerationWorkflow, input)

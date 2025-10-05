@@ -115,6 +115,10 @@ build-push: ## Build and push Docker image with git hash tag
 
 deploy-server: ## Deploy server to Kubernetes (prod)
 	@$(MAKE) build-push
+	@echo "Updating prompts in .env.prod file..."
+	@# Remove old prompt variables to prevent duplication
+	@grep -vE '_SYSTEM_PROMPT=' .env.prod > .env.tmp && mv .env.tmp .env.prod
+	@make generate-prompts >> .env.prod
 	@GIT_HASH=$$(cat .git_hash); \
 	echo "Applying server deployment with image: $(DOCKER_REPO):$$GIT_HASH"; \
 	kustomize build --load-restrictor=LoadRestrictionsNone server/k8s/prod | \
@@ -124,6 +128,10 @@ deploy-server: ## Deploy server to Kubernetes (prod)
 
 deploy-worker: ## Deploy worker to Kubernetes (prod)
 	@$(MAKE) build-push
+	@echo "Updating prompts in .env.prod file..."
+	@# Remove old prompt variables to prevent duplication
+	@grep -vE '_SYSTEM_PROMPT=' .env.prod > .env.tmp && mv .env.tmp .env.prod
+	@make generate-prompts >> .env.prod
 	@GIT_HASH=$$(cat .git_hash); \
 	echo "Applying worker deployment with image: $(DOCKER_REPO):$$GIT_HASH"; \
 	kustomize build --load-restrictor=LoadRestrictionsNone worker/k8s/prod | \

@@ -8,13 +8,31 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
 	"go.temporal.io/sdk/client"
 )
+
+// requestLogger is a custom middleware that logs only failed requests (4xx and 5xx).
+func requestLogger(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		// Call the next handler in the chain
+		err := next(c)
+
+		// Get the response status code
+		status := c.Response().Status
+
+		// Only log if the status code indicates an error
+		if status >= 400 {
+			c.Logger().Errorf("Request failed: status=%d, method=%s, uri=%s",
+				status, c.Request().Method, c.Request().RequestURI)
+		}
+
+		return err
+	}
+}
 
 //go:embed all:static
 var staticFS embed.FS
@@ -158,19 +176,7 @@ func (s *APIServer) SetupRoutes() *echo.Echo {
 	e.GET("/static/*", echo.WrapHandler(http.FileServer(http.FS(staticFS))))
 
 	// Middleware
-	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
-		Skipper: func(c echo.Context) bool {
-			path := c.Request().URL.Path
-			// Skip logging for status polling and other noisy endpoints
-			if strings.HasPrefix(path, "/workflow/") && strings.HasSuffix(path, "/status") {
-				return true
-			}
-			if path == "/.well-known/appspecific/com.chrome.devtools.json" {
-				return true
-			}
-			return false
-		},
-	}))
+	e.Use(requestLogger)
 	e.Use(middleware.Recover())
 
 	// Setup template engine

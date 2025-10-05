@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -16,183 +17,34 @@ import (
 
 	"github.com/chai2010/webp"
 	"github.com/nfnt/resize"
-	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
 	"google.golang.org/genai"
 )
 
-// AgenticScrapeGitHubProfile uses an agentic approach to scrape GitHub profile data. The general idea
-// is to use the OpenAI Responses API and provide a single tool call to the agent: the GitHub CLI.
-// The agent consists of a for loop that runs until the agent has enough information to stop
-// looping and generate a prompt for the image generation.
-func AgenticScrapeGitHubProfile(ctx context.Context, prompt string) (GitHubProfile, error) {
-	logger := activity.GetLogger(ctx)
-	logger.Info("Starting agentic GitHub profile scrape")
-	// This implements an agentic approach where we use GitHub CLI in a loop
-	// until we're satisfied we have sufficient data.
-
-	submitTool := Tool{
-		Name:        "submit_github_profile",
-		Description: "Submit the final GitHub profile information.",
-		Parameters: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username":      map[string]string{"type": "string"},
-				"bio":           map[string]string{"type": "string"},
-				"location":      map[string]string{"type": "string"},
-				"website":       map[string]string{"type": "string"},
-				"publicRepos":   map[string]string{"type": "integer"},
-				"originalRepos": map[string]string{"type": "integer"},
-				"forkedRepos":   map[string]string{"type": "integer"},
-				"languages":     map[string]interface{}{"type": "array", "items": map[string]string{"type": "string"}},
-				"topRepositories": map[string]interface{}{
-					"type": "array",
-					"items": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"name":        map[string]string{"type": "string"},
-							"description": map[string]string{"type": "string"},
-							"language":    map[string]string{"type": "string"},
-							"stars":       map[string]string{"type": "integer"},
-							"forks":       map[string]string{"type": "integer"},
-							"is_fork":     map[string]string{"type": "boolean"},
-						},
-						"required":             []string{"name", "description", "language", "stars", "forks", "is_fork"},
-						"additionalProperties": false,
-					},
-				},
-				"contributionGraph": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"total_contributions": map[string]string{"type": "integer"},
-						"streak":              map[string]string{"type": "integer"},
-						"contributions": map[string]interface{}{
-							"type":                 "object",
-							"additionalProperties": map[string]string{"type": "integer"},
-						},
-					},
-					"required":             []string{"total_contributions", "streak"},
-					"additionalProperties": false,
-				},
-				"professional_summary": map[string]string{"type": "string"},
-				"code_snippets": map[string]interface{}{
-					"type": "array",
-					"items": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"repository": map[string]string{"type": "string"},
-							"file_path":  map[string]string{"type": "string"},
-							"content":    map[string]string{"type": "string"},
-							"language":   map[string]string{"type": "string"},
-						},
-						"required":             []string{"repository", "file_path", "content", "language"},
-						"additionalProperties": false,
-					},
-				},
-			},
-			"required":             []string{"username", "bio", "location", "website", "publicRepos", "originalRepos", "forkedRepos", "languages", "topRepositories", "contributionGraph", "professional_summary", "code_snippets"},
-			"additionalProperties": false,
-		},
+// ExecuteGhCommandActivity is an activity that executes a GitHub CLI command.
+func ExecuteGhCommandActivity(ctx context.Context, command string) (string, error) {
+	output, err := executeGhCommand(ctx, command)
+	if err != nil {
+		var exitErr *exec.ExitError
+		// Check if the error is an ExitError, which indicates the command ran but failed.
+		// These are business logic failures (e.g., bad command) that shouldn't be retried.
+		if errors.As(err, &exitErr) {
+			// Forward the error message from stderr back to the agent as a non-retryable error.
+			return "", temporal.NewNonRetryableApplicationError(err.Error(), "GhCommandExecutionError", nil)
+		}
+		// For other errors (e.g., command not found, context cancelled), let Temporal retry.
+		return "", err
 	}
+	return output, nil
+}
 
-	ghTool := Tool{
-		Name:        "gh",
-		Description: "Execute a GitHub CLI command. Examples: `gh api users/USERNAME`, `gh repo list --owner USERNAME --source --no-forks --json name,pushedAt`, `gh commit list --repo OWNER/REPO -L 5`, `gh commit view SHA --repo OWNER/REPO --patch`, `gh repo view OWNER/REPO --json name,pushedAt`",
-		Parameters: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"command": map[string]string{"type": "string", "description": "The `gh` command arguments to execute. Do not include 'gh' in the command."},
-			},
-			"required":             []string{"command"},
-			"additionalProperties": false,
-		},
+// GenerateResponsesTurnActivity is an activity that generates a turn in the agentic conversation.
+func GenerateResponsesTurnActivity(ctx context.Context, p OpenAIConfig, previousResponseID string, userInput string, tools []Tool, functionOutputs map[string]string) (GenerateResponsesTurnResult, error) {
+	text, calls, id, err := generateResponsesTurn(ctx, p, previousResponseID, userInput, tools, functionOutputs)
+	if err != nil {
+		return GenerateResponsesTurnResult{}, err
 	}
-	tools := []Tool{submitTool, ghTool}
-
-	previousResponseID := ""
-	pendingOutputs := map[string]string{}
-	maxTurns := 20
-
-	for i := 0; i < maxTurns; i++ {
-		logger.Info("Agent turn", "turn", i+1)
-		var turnResult GenerateResponsesTurnResult
-		var actErr error
-
-		cfg := OpenAIConfig{
-			APIKey: os.Getenv("RESEARCH_ORCHESTRATOR_LLM_API_KEY"),
-			Model:  os.Getenv("RESEARCH_ORCHESTRATOR_LLM_MODEL"),
-		}
-
-		if previousResponseID == "" {
-			text, calls, id, err := generateResponsesTurn(ctx, cfg, previousResponseID, prompt, tools, nil)
-			if err != nil {
-				actErr = err
-			} else {
-				turnResult = GenerateResponsesTurnResult{Assistant: text, Calls: calls, ID: id}
-			}
-		} else {
-			text, calls, id, err := generateResponsesTurn(ctx, cfg, previousResponseID, "", tools, pendingOutputs)
-			if err != nil {
-				actErr = err
-			} else {
-				turnResult = GenerateResponsesTurnResult{Assistant: text, Calls: calls, ID: id}
-			}
-		}
-
-		if actErr != nil {
-			logger.Error("LLM activity failed", "error", actErr)
-			return GitHubProfile{}, actErr
-		}
-		previousResponseID = turnResult.ID
-		pendingOutputs = map[string]string{}
-
-		if len(turnResult.Calls) > 0 {
-			logger.Info("LLM requested tool calls", "calls", turnResult.Calls)
-			for _, toolCall := range turnResult.Calls {
-				var toolResult string
-				switch toolCall.Name {
-				case "submit_github_profile":
-					var profile GitHubProfile
-					if err := json.Unmarshal([]byte(toolCall.Arguments), &profile); err != nil {
-						toolResult = fmt.Sprintf(`{"error": "failed to parse arguments: %v"}`, err)
-					} else {
-						// Success, we can exit the loop.
-						return profile, nil
-					}
-				case "gh":
-					var args struct {
-						Command string `json:"command"`
-					}
-					if err := json.Unmarshal([]byte(toolCall.Arguments), &args); err != nil {
-						toolResult = fmt.Sprintf(`{"error": "failed to parse arguments: %v"}`, err)
-					} else {
-						result, err := executeGhCommand(ctx, args.Command)
-						if err != nil {
-							toolResult = fmt.Sprintf(`{"error": "failed to execute tool: %v"}`, err)
-						} else {
-							toolResult = result
-						}
-					}
-				default:
-					toolResult = `{"error": "unknown tool requested"}`
-				}
-				pendingOutputs[toolCall.ID] = toolResult
-				const maxLogLength = 512
-				truncatedResult := toolResult
-				if len(truncatedResult) > maxLogLength {
-					truncatedResult = truncatedResult[:maxLogLength] + "..."
-				}
-				logger.Info("Tool call result", "call_id", toolCall.ID, "name", toolCall.Name, "result", truncatedResult)
-			}
-			continue
-		}
-		if strings.TrimSpace(turnResult.Assistant) == "" {
-			logger.Warn("No tool calls and no assistant content; ending conversation")
-			break
-		}
-		logger.Info("LLM responded with text", "text", turnResult.Assistant)
-	}
-
-	return GitHubProfile{}, fmt.Errorf("agentic loop finished without submitting a profile")
+	return GenerateResponsesTurnResult{Assistant: text, Calls: calls, ID: id}, nil
 }
 
 func executeGhCommand(ctx context.Context, command string) (string, error) {
