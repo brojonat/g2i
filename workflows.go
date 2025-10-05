@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"time"
 
 	"go.temporal.io/sdk/workflow"
@@ -30,7 +29,8 @@ func RunContentGenerationWorkflow(ctx workflow.Context, input AppInput) (AppOutp
 	state.Status = "Analyzing GitHub profile..."
 	var githubProfile GitHubProfile
 	agentSystemPrompt := input.ResearchAgentSystemPrompt
-	agentSystemPrompt += fmt.Sprintf("\n\nScrape this info from the GitHub profile for the user: %s", input.GitHubUsername)
+	// FIXME: disabling this temporarily to get the agent to return fast
+	// agentSystemPrompt += fmt.Sprintf("\n\nScrape this info from the GitHub profile for the user: %s", input.GitHubUsername)
 
 	// The agentic scrape activity can take much longer, so we'll give it a separate, longer timeout.
 	cwo := workflow.ChildWorkflowOptions{
