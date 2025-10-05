@@ -37,6 +37,9 @@ func requestLogger(next echo.HandlerFunc) echo.HandlerFunc {
 //go:embed all:static
 var staticFS embed.FS
 
+//go:embed all:templates
+var templateFS embed.FS
+
 // TemplateRenderer is a custom html/template renderer for Echo framework
 type TemplateRenderer struct {
 	templates map[string]*template.Template
@@ -79,10 +82,10 @@ func createMyRender() *TemplateRenderer {
 		templates: make(map[string]*template.Template),
 	}
 
-	r.templates["index"] = template.Must(template.ParseFiles("templates/base.html", "templates/index.html"))
-	r.templates["workflow-status"] = template.Must(template.ParseFiles("templates/base.html", "templates/workflow-status.html"))
-	r.templates["workflow-details"] = template.Must(template.ParseFiles("templates/base.html", "templates/workflow-details.html"))
-	r.templates["error"] = template.Must(template.ParseFiles("templates/base.html", "templates/error.html"))
+	r.templates["index"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/index.html"))
+	r.templates["workflow-status"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/workflow-status.html"))
+	r.templates["workflow-details"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/workflow-details.html"))
+	r.templates["error"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/error.html"))
 
 	return r
 }
