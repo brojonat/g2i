@@ -93,6 +93,7 @@ func (s *S3CompatibleStorage) GetURL(bucket, key string) string {
 		protocol = "https"
 	}
 	publicURL := protocol + "://" + s.PublicEndpoint + "/"
+	// r2 is different because cloudflare domain routes directly to the bucket
 	if s.Platform == S3PlatformR2 {
 		publicURL += key
 		return publicURL
