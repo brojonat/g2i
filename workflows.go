@@ -63,8 +63,8 @@ func RunContentGenerationWorkflow(ctx workflow.Context, input AppInput) (AppOutp
 
 	// Step 4: Store content in object storage
 	state.Status = "Storing image..."
-	var storageURL string
-	err = workflow.ExecuteActivity(ctx, StoreContent, generationResult.ImageData, input.StorageProvider, input.StorageBucket, input.StorageKey, input.GitHubUsername, generationResult.ContentType).Get(ctx, &storageURL)
+	var publicURL string
+	err = workflow.ExecuteActivity(ctx, StoreContent, generationResult.ImageData, input.StorageProvider, input.StorageBucket, input.StorageKey, input.GitHubUsername, generationResult.ContentType).Get(ctx, &publicURL)
 	if err != nil {
 		logger.Error("Failed to store content", "error", err)
 		return AppOutput{}, err
@@ -73,11 +73,11 @@ func RunContentGenerationWorkflow(ctx workflow.Context, input AppInput) (AppOutp
 	output := AppOutput{
 		GitHubProfile:           githubProfile,
 		ContentGenerationPrompt: input.ContentGenerationSystemPrompt,
-		ContentURL:              storageURL, // Use storage URL directly
+		ContentURL:              publicURL,
 		ImageFormat:             input.ImageFormat,
 		ImageWidth:              input.ImageWidth,
 		ImageHeight:             input.ImageHeight,
-		StorageURL:              storageURL,
+		StorageURL:              publicURL,
 		CreatedAt:               time.Now(),
 	}
 
@@ -85,6 +85,6 @@ func RunContentGenerationWorkflow(ctx workflow.Context, input AppInput) (AppOutp
 	state.Completed = true
 	state.Result = output
 
-	logger.Info("Content generation workflow completed", "storage_url", storageURL)
+	logger.Info("Content generation workflow completed", "storage_url", publicURL)
 	return output, nil
 }

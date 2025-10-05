@@ -18,8 +18,16 @@ type ObjectStorage interface {
 	GetURL(bucket, key string) string
 }
 
+const (
+	S3PlatformR2    = "r2"
+	S3PlatformMinio = "minio"
+	S3PlatformAWS   = "aws"
+	S3PlatformGCS   = "gcs"
+)
+
 // S3CompatibleStorage implements ObjectStorage using S3-compatible storage
 type S3CompatibleStorage struct {
+	Platform       string
 	Endpoint       string
 	PublicEndpoint string
 	Region         string
@@ -31,6 +39,7 @@ type S3CompatibleStorage struct {
 // NewS3CompatibleStorage creates a new S3-compatible storage instance
 func NewS3CompatibleStorage() *S3CompatibleStorage {
 	return &S3CompatibleStorage{
+		Platform:       os.Getenv("S3_PLATFORM"),
 		Endpoint:       os.Getenv("S3_ENDPOINT"),
 		PublicEndpoint: os.Getenv("S3_PUBLIC_ENDPOINT"),
 		Region:         os.Getenv("S3_REGION"),
@@ -77,13 +86,19 @@ func (s *S3CompatibleStorage) Store(ctx context.Context, data []byte, bucket, ke
 	return s.GetURL(bucket, key), nil
 }
 
-// GetURL returns the URL for a stored object
+// GetURL returns the PUBLIC URL for a stored object
 func (s *S3CompatibleStorage) GetURL(bucket, key string) string {
 	protocol := "http"
 	if s.UseSSL {
 		protocol = "https"
 	}
-	return fmt.Sprintf("%s://%s/%s/%s", protocol, s.PublicEndpoint, bucket, key)
+	publicURL := protocol + "://" + s.PublicEndpoint + "/"
+	if s.Platform == S3PlatformR2 {
+		publicURL += key
+		return publicURL
+	}
+	publicURL += bucket + "/" + key
+	return publicURL
 }
 
 // S3Storage implements ObjectStorage using AWS S3
