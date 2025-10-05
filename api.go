@@ -152,6 +152,8 @@ func (s *APIServer) SetupRoutes() *echo.Echo {
 	e := echo.New()
 	e.Logger.SetLevel(log.INFO)
 
+	e.HTTPErrorHandler = customHTTPErrorHandler
+
 	// Serve static files
 	e.GET("/static/*", echo.WrapHandler(http.FileServer(http.FS(staticFS))))
 
@@ -266,4 +268,29 @@ func (s *APIServer) GetProfilePage(c echo.Context) error {
 			"RedirectTimeout": 5,
 		})
 	}
+}
+
+// customHTTPErrorHandler handles all HTTP errors for the application.
+// It provides a custom 404 page with a redirect.
+func customHTTPErrorHandler(err error, c echo.Context) {
+	code := http.StatusInternalServerError
+	if he, ok := err.(*echo.HTTPError); ok {
+		code = he.Code
+	}
+
+	// For 404 Not Found errors, render a custom page that redirects to home.
+	if code == http.StatusNotFound {
+		c.Logger().Warnf("Handling 404 for %s", c.Request().URL.Path)
+		if err := c.Render(http.StatusNotFound, "error", echo.Map{
+			"error":           "Page not found. You will be redirected to the homepage.",
+			"RedirectURL":     "/",
+			"RedirectTimeout": 5,
+		}); err != nil {
+			c.Logger().Error(err)
+		}
+		return
+	}
+
+	// For all other errors, use the default Echo error handler.
+	c.Echo().DefaultHTTPErrorHandler(err, c)
 }
