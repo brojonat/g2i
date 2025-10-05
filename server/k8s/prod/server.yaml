@@ -33,7 +33,7 @@ spec:
         envFrom:
         - secretRef:
             name: gip-api-secrets
-        command: ["/app"]
+        command: ["/app/main"]
         args: ["server"]
         resources:
           requests:

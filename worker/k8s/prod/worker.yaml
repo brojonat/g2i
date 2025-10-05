@@ -21,7 +21,7 @@ spec:
         envFrom:
         - secretRef:
             name: gip-worker-secrets
-        command: ["/app"]
+        command: ["/app/main"]
         args:
         - worker
         resources:
@@ -34,7 +34,7 @@ spec:
         readinessProbe:
           exec:
             command:
-            - /app
+            - /app/main
             - worker
             - --check-connection
           initialDelaySeconds: 5
@@ -43,7 +43,7 @@ spec:
         livenessProbe:
           exec:
             command:
-            - /app
+            - /app/main
             - worker
             - --check-connection
           initialDelaySeconds: 15
