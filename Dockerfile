@@ -37,6 +37,9 @@ WORKDIR /app
 COPY --from=builder /app/main .
 # Copy the compiled C library for webp support
 COPY --from=builder /usr/lib/libwebp.so.7 /usr/lib/
+# Copy the templates and static assets
+COPY templates ./templates
+COPY static ./static
 
 # Set the entrypoint for the container
 ENTRYPOINT ["/app/main"]
