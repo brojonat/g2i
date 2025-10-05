@@ -1,0 +1,29 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .bg { fill: #0d0221; }
+      .glow {
+        fill: none;
+        stroke: #00f0ff;
+        stroke-width: 4;
+        filter: url(#neon-glow);
+      }
+      .text {
+        font-family: 'Orbitron', sans-serif;
+        font-size: 40px;
+        fill: #00f0ff;
+        text-anchor: middle;
+        filter: url(#neon-glow);
+      }
+    </style>
+    <filter id="neon-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+  <rect class="bg" width="64" height="64" rx="8"/>
+  <path class="glow" d="M16 12 L32 52 L48 12" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>
