@@ -115,20 +115,20 @@ build-push: ## Build and push Docker image with git hash tag
 
 deploy-server: ## Deploy server to Kubernetes (prod)
 	@$(MAKE) build-push
-	$(eval GIT_HASH := $(shell cat .git_hash))
-	@echo "Applying server deployment with image: $(DOCKER_REPO):$(GIT_HASH)"
+	@GIT_HASH=$$(cat .git_hash); \
+	echo "Applying server deployment with image: $(DOCKER_REPO):$$GIT_HASH"; \
 	kustomize build --load-restrictor=LoadRestrictionsNone server/k8s/prod | \
 	sed -e "s;{{DOCKER_REPO}};$(DOCKER_REPO);g" \
-			-e "s;{{GIT_COMMIT_SHA}};$(GIT_HASH);g" | \
+			-e "s;{{GIT_COMMIT_SHA}};$$GIT_HASH;g" | \
 			kubectl apply -f -
 
 deploy-worker: ## Deploy worker to Kubernetes (prod)
 	@$(MAKE) build-push
-	$(eval GIT_HASH := $(shell cat .git_hash))
-	@echo "Applying worker deployment with image: $(DOCKER_REPO):$(GIT_HASH)"
+	@GIT_HASH=$$(cat .git_hash); \
+	echo "Applying worker deployment with image: $(DOCKER_REPO):$$GIT_HASH"; \
 	kustomize build --load-restrictor=LoadRestrictionsNone worker/k8s/prod | \
 	sed -e "s;{{DOCKER_REPO}};$(DOCKER_REPO);g" \
-			-e "s;{{GIT_COMMIT_SHA}};$(GIT_HASH);g" | \
+			-e "s;{{GIT_COMMIT_SHA}};$$GIT_HASH;g" | \
 			kubectl apply -f -
 
 deploy-all: ## Deploy both server and worker to Kubernetes (prod)
