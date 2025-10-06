@@ -71,17 +71,17 @@
 
     <script>
       document.body.addEventListener("htmx:afterSwap", function (evt) {
-        const visNav = document.getElementById("vis-nav");
+        const generateNav = document.getElementById("generate-nav");
         const pollNav = document.getElementById("poll-nav");
         const trigger = evt.detail.requestConfig.elt;
 
-        if (visNav && pollNav && trigger) {
-          if (trigger.id === "vis-nav") {
-            visNav.classList.add("active");
+        if (generateNav && pollNav && trigger) {
+          if (trigger.id === "generate-nav") {
+            generateNav.classList.add("active");
             pollNav.classList.remove("active");
           } else if (trigger.id === "poll-nav") {
             pollNav.classList.add("active");
-            visNav.classList.remove("active");
+            generateNav.classList.remove("active");
           }
         }
       });

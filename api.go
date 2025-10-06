@@ -92,7 +92,7 @@ func createMyRender() *TemplateRenderer {
 	r.templates["poll-details"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/poll-details.html", "templates/poll-results.html"))
 	r.templates["poll-results"] = template.Must(template.ParseFS(templateFS, "templates/poll-results.html"))
 	r.templates["poll-creator-search-results"] = template.Must(template.ParseFS(templateFS, "templates/poll-creator-search-results.html"))
-	r.templates["visualization-form"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/visualization-form.html"))
+	r.templates["generate-form"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/generate-form.html"))
 
 	return r
 }
@@ -200,6 +200,7 @@ func (s *APIServer) SetupRoutes() *echo.Echo {
 
 	// Workflow routes
 	e.POST("/generate", s.StartContentGeneration)
+	e.GET("/generate-form", s.GetGenerateForm)
 	e.GET("/workflow/:id/status", s.GetWorkflowStatus)
 	e.GET("/workflow/:id", s.GetWorkflowDetails)
 	e.GET("/profile/:username", s.GetProfilePage)
@@ -221,6 +222,11 @@ func (s *APIServer) SetupRoutes() *echo.Echo {
 // GetVisualizationForm renders the visualization form partial.
 func (s *APIServer) GetVisualizationForm(c echo.Context) error {
 	return c.Render(http.StatusOK, "visualization-form", nil)
+}
+
+// GetGenerateForm renders the meme generation form.
+func (s *APIServer) GetGenerateForm(c echo.Context) error {
+	return c.Render(http.StatusOK, "generate-form", nil)
 }
 
 // ShowPollForm renders the poll creation form.
@@ -262,11 +268,8 @@ func (s *APIServer) SearchMemeCreators(c echo.Context) error {
 
 // CreatePoll handles the creation of a new poll workflow.
 func (s *APIServer) CreatePoll(c echo.Context) error {
-	duration, err := strconv.Atoi(c.FormValue("duration_seconds"))
-	if err != nil {
-		// Default to 1 hour if not specified or invalid
-		duration = 3600
-	}
+	// All polls run for one week.
+	duration := 604800 // 7 * 24 * 60 * 60
 
 	// For a multi-select form, we need to get all values.
 	allowedOptions := c.Request().Form["allowed_options"]
@@ -282,7 +285,7 @@ func (s *APIServer) CreatePoll(c echo.Context) error {
 	// Generate a unique ID for the workflow
 	workflowID := "poll-" + uuid.New().String()
 
-	_, err = StartPollWorkflow(s.temporalClient, workflowID, config)
+	_, err := StartPollWorkflow(s.temporalClient, workflowID, config)
 	if err != nil {
 		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
 	}
