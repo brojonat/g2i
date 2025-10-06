@@ -1,0 +1,30 @@
+{{define "content"}}
+<div class="bg-light p-4 rounded border shadow-sm">
+  <h2 class="text-4xl font-semibold mb-6">Start New Meme</h2>
+  <form hx-post="/generate" hx-target="#workflow-status" hx-swap="innerHTML">
+    <div class="space-y-6">
+      <div>
+        <label for="github_username" class="block text-xl font-medium"
+          >GitHub Username</label
+        >
+        <input
+          type="text"
+          id="github_username"
+          name="github_username"
+          required
+          class="mt-2 block w-full rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-lg"
+          placeholder="e.g., octocat"
+        />
+      </div>
+    </div>
+    <div class="mt-8">
+      <button
+        type="submit"
+        class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-lg font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+      >
+        Generate Meme
+      </button>
+    </div>
+  </form>
+</div>
+{{end}}

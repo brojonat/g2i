@@ -18,7 +18,11 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/static/css/style.css" />
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script
+      src="https://unpkg.com/htmx.org@1.9.10"
+      integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC"
+      crossorigin="anonymous"
+    ></script>
     <script src="https://unpkg.com/htmx.org/dist/ext/json-enc.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -64,6 +68,24 @@
       })();
     </script>
     {{end}}
+
+    <script>
+      document.body.addEventListener("htmx:afterSwap", function (evt) {
+        const visNav = document.getElementById("vis-nav");
+        const pollNav = document.getElementById("poll-nav");
+        const trigger = evt.detail.requestConfig.elt;
+
+        if (visNav && pollNav && trigger) {
+          if (trigger.id === "vis-nav") {
+            visNav.classList.add("active");
+            pollNav.classList.remove("active");
+          } else if (trigger.id === "poll-nav") {
+            pollNav.classList.add("active");
+            visNav.classList.remove("active");
+          }
+        }
+      });
+    </script>
 
     <footer class="mt-12"></footer>
   </body>

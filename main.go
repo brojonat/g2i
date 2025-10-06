@@ -71,6 +71,7 @@ func runWorker(ctx context.Context, wg *sync.WaitGroup) {
 	// Register workflows and activities
 	w.RegisterWorkflow(RunContentGenerationWorkflow)
 	w.RegisterWorkflow(AgenticScrapeGitHubProfileWorkflow)
+	w.RegisterWorkflow(PollWorkflow)
 	w.RegisterActivity(GenerateContentGenerationPrompt)
 	w.RegisterActivity(GenerateContent)
 	w.RegisterActivity(StoreContent)
@@ -96,7 +97,9 @@ func runServer(ctx context.Context, stop context.CancelFunc, wg *sync.WaitGroup)
 	defer c.Close()
 
 	// Create API server
-	apiServer := NewAPIServer(c)
+	provider := os.Getenv("STORAGE_PROVIDER")
+	storage := NewObjectStorage(provider)
+	apiServer := NewAPIServer(c, storage)
 
 	// Setup routes
 	router := apiServer.SetupRoutes()
@@ -124,7 +127,7 @@ func runServer(ctx context.Context, stop context.CancelFunc, wg *sync.WaitGroup)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := router.Shutdown(shutdownCtx); err != nil {
-		stdlog.Fatalf("Server forced to shutdown: ", err)
+		stdlog.Fatalf("Server forced to shutdown: %v", err)
 	}
 
 	stdlog.Println("Server exiting")

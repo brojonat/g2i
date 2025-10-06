@@ -71,6 +71,10 @@ footer {
     box-shadow: 0 0 20px rgba(0, 240, 255, 0.5);
     color: #ffffff;
     justify-self: center;
+    background-color: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    backdrop-filter: blur(10px);
 }
 
 .glass-container h2, .glass-container label {
@@ -148,6 +152,34 @@ footer {
     color: #ff0033;
     font-weight: 700;
     text-shadow: 0 0 8px rgba(255, 0, 51, 0.8);
+}
+
+.panel-nav-item {
+    cursor: pointer;
+    padding: 0.5rem 1rem;
+    font-size: 1.25rem;
+    color: #a0a0a0;
+    border: 2px solid transparent;
+    transition: color 0.3s ease, border-color 0.3s ease;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.panel-nav-item:hover {
+    color: #ffffff;
+}
+
+.panel-nav-item.active {
+    color: #ffffff;
+    border: 2px solid #00d4ff;
+    border-radius: 5px;
+    box-shadow: 0 0 5px #00d4ff;
+}
+
+.panel-nav {
+    display: flex;
+    flex-direction: row;
+    gap: 1rem;
 }
 
 /* Responsive Design */

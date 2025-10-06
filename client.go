@@ -58,6 +58,44 @@ func GetWorkflowDescription(c client.Client, workflowID string) (*workflowservic
 	return desc, nil
 }
 
+// StartPollWorkflow starts the poll workflow.
+func StartPollWorkflow(c client.Client, workflowID string, config PollConfig) (client.WorkflowRun, error) {
+	options := client.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: os.Getenv("TEMPORAL_TASK_QUEUE"),
+	}
+
+	we, err := c.ExecuteWorkflow(context.Background(), options, PollWorkflow, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start poll workflow: %w", err)
+	}
+
+	log.Printf("Started workflow with ID: %s, RunID: %s", we.GetID(), we.GetRunID())
+	return we, nil
+}
+
+// QueryPollWorkflow queries a running poll workflow.
+func QueryPollWorkflow[T any](c client.Client, workflowID string, queryType string) (T, error) {
+	var result T
+	resp, err := c.QueryWorkflow(context.Background(), workflowID, "", queryType)
+	if err != nil {
+		return result, fmt.Errorf("failed to query workflow: %w", err)
+	}
+	if err := resp.Get(&result); err != nil {
+		return result, fmt.Errorf("failed to decode query result: %w", err)
+	}
+	return result, nil
+}
+
+// SignalPollWorkflow sends a signal to a running poll workflow.
+func SignalPollWorkflow(c client.Client, workflowID string, signalName string, signalArg interface{}) error {
+	err := c.SignalWorkflow(context.Background(), workflowID, "", signalName, signalArg)
+	if err != nil {
+		return fmt.Errorf("failed to send signal '%s' to workflow: %w", signalName, err)
+	}
+	return nil
+}
+
 // Example usage function
 func ExampleUsage() {
 	// Create Temporal client

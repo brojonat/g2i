@@ -15,6 +15,7 @@ import (
 // ObjectStorage defines the interface for object storage operations
 type ObjectStorage interface {
 	Store(ctx context.Context, data []byte, bucket, key, contentType string) (string, error)
+	ListTopLevelFolders(ctx context.Context, bucket string) ([]string, error)
 	GetURL(bucket, key string) string
 }
 
@@ -86,6 +87,46 @@ func (s *S3CompatibleStorage) Store(ctx context.Context, data []byte, bucket, ke
 	return s.GetURL(bucket, key), nil
 }
 
+// ListTopLevelFolders lists "directories" at the root of a bucket.
+func (s *S3CompatibleStorage) ListTopLevelFolders(ctx context.Context, bucket string) ([]string, error) {
+	client, err := minio.New(s.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(s.AccessKey, s.SecretKey, ""),
+		Secure: s.UseSSL,
+		Region: s.Region,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create S3-compatible client: %w", err)
+	}
+
+	objectCh := client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Recursive: false, // We only want top-level folders
+	})
+
+	folders := make(map[string]struct{})
+	for object := range objectCh {
+		if object.Err != nil {
+			return nil, fmt.Errorf("failed during object listing: %w", object.Err)
+		}
+		// In S3, "folders" are just prefixes ending with a "/"
+		if strings.HasSuffix(object.Key, "/") {
+			folders[strings.TrimSuffix(object.Key, "/")] = struct{}{}
+		} else {
+			// If it's a file at the top level, its "folder" is the part before the first "/"
+			parts := strings.SplitN(object.Key, "/", 2)
+			if len(parts) > 0 {
+				folders[parts[0]] = struct{}{}
+			}
+		}
+	}
+
+	var folderList []string
+	for folder := range folders {
+		folderList = append(folderList, folder)
+	}
+
+	return folderList, nil
+}
+
 // GetURL returns the PUBLIC URL for a stored object
 func (s *S3CompatibleStorage) GetURL(bucket, key string) string {
 	protocol := "http"
@@ -126,6 +167,12 @@ func (s *S3Storage) Store(ctx context.Context, data []byte, bucket, key, content
 	return url, nil
 }
 
+// ListTopLevelFolders for S3 (mock implementation)
+func (s *S3Storage) ListTopLevelFolders(ctx context.Context, bucket string) ([]string, error) {
+	// Mock implementation for AWS S3
+	return []string{"user1", "user2", "user3"}, nil
+}
+
 // GetURL returns the URL for a stored object
 func (s *S3Storage) GetURL(bucket, key string) string {
 	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucket, s.Region, key)
@@ -151,6 +198,12 @@ func (g *GCSStorage) Store(ctx context.Context, data []byte, bucket, key, conten
 	// For now, return a mock GCS URL
 	url := fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucket, key)
 	return url, nil
+}
+
+// ListTopLevelFolders for GCS (mock implementation)
+func (g *GCSStorage) ListTopLevelFolders(ctx context.Context, bucket string) ([]string, error) {
+	// Mock implementation for GCS
+	return []string{"user1", "user2", "user3"}, nil
 }
 
 // GetURL returns the URL for a stored object

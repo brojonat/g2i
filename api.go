@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
@@ -86,6 +88,11 @@ func createMyRender() *TemplateRenderer {
 	r.templates["workflow-status"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/workflow-status.html"))
 	r.templates["workflow-details"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/workflow-details.html"))
 	r.templates["error"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/error.html"))
+	r.templates["poll-form"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/poll-form.html"))
+	r.templates["poll-details"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/poll-details.html", "templates/poll-results.html"))
+	r.templates["poll-results"] = template.Must(template.ParseFS(templateFS, "templates/poll-results.html"))
+	r.templates["poll-creator-search-results"] = template.Must(template.ParseFS(templateFS, "templates/poll-creator-search-results.html"))
+	r.templates["visualization-form"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/visualization-form.html"))
 
 	return r
 }
@@ -98,13 +105,15 @@ type GenerateRequest struct {
 
 // APIServer for handling HTTP requests
 type APIServer struct {
-	temporalClient client.Client
+	temporalClient  client.Client
+	storageProvider ObjectStorage
 }
 
 // NewAPIServer creates a new API server
-func NewAPIServer(temporalClient client.Client) *APIServer {
+func NewAPIServer(temporalClient client.Client, storageProvider ObjectStorage) *APIServer {
 	return &APIServer{
-		temporalClient: temporalClient,
+		temporalClient:  temporalClient,
+		storageProvider: storageProvider,
 	}
 }
 
@@ -195,7 +204,163 @@ func (s *APIServer) SetupRoutes() *echo.Echo {
 	e.GET("/workflow/:id", s.GetWorkflowDetails)
 	e.GET("/profile/:username", s.GetProfilePage)
 
+	// Poll routes
+	e.GET("/poll/new", s.ShowPollForm)
+	e.POST("/poll", s.CreatePoll)
+	e.POST("/poll/search-creators", s.SearchMemeCreators)
+	e.GET("/poll/:id", s.GetPollDetails)
+	e.GET("/poll/:id/results", s.GetPollResults)
+	e.POST("/poll/:id/vote", s.VoteOnPoll)
+
+	// Visualization routes
+	e.GET("/visualization-form", s.GetVisualizationForm)
+
 	return e
+}
+
+// GetVisualizationForm renders the visualization form partial.
+func (s *APIServer) GetVisualizationForm(c echo.Context) error {
+	return c.Render(http.StatusOK, "visualization-form", nil)
+}
+
+// ShowPollForm renders the poll creation form.
+func (s *APIServer) ShowPollForm(c echo.Context) error {
+	return c.Render(http.StatusOK, "poll-form", echo.Map{
+		"Title": "Create a New Poll",
+	})
+}
+
+// SearchMemeCreators handles the active search for meme creators.
+func (s *APIServer) SearchMemeCreators(c echo.Context) error {
+	searchTerm := c.FormValue("search")
+	bucket := os.Getenv("STORAGE_BUCKET")
+	if bucket == "" {
+		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": "STORAGE_BUCKET environment variable not set"})
+	}
+
+	allCreators, err := s.storageProvider.ListTopLevelFolders(c.Request().Context(), bucket)
+	if err != nil {
+		// In an HTMX context, it might be better to return a partial with an error message.
+		return c.String(http.StatusInternalServerError, "Error fetching creators: "+err.Error())
+	}
+
+	var filteredCreators []string
+	if searchTerm == "" {
+		filteredCreators = allCreators
+	} else {
+		for _, creator := range allCreators {
+			if strings.Contains(strings.ToLower(creator), strings.ToLower(searchTerm)) {
+				filteredCreators = append(filteredCreators, creator)
+			}
+		}
+	}
+
+	return c.Render(http.StatusOK, "poll-creator-search-results", echo.Map{
+		"Creators": filteredCreators,
+	})
+}
+
+// CreatePoll handles the creation of a new poll workflow.
+func (s *APIServer) CreatePoll(c echo.Context) error {
+	duration, err := strconv.Atoi(c.FormValue("duration_seconds"))
+	if err != nil {
+		// Default to 1 hour if not specified or invalid
+		duration = 3600
+	}
+
+	// For a multi-select form, we need to get all values.
+	allowedOptions := c.Request().Form["allowed_options"]
+
+	config := PollConfig{
+		Question:        c.FormValue("question"),
+		AllowedOptions:  allowedOptions,
+		DurationSeconds: duration,
+		SingleVote:      c.FormValue("single_vote") == "true",
+		StartBlocked:    c.FormValue("start_blocked") == "true",
+	}
+
+	// Generate a unique ID for the workflow
+	workflowID := "poll-" + uuid.New().String()
+
+	_, err = StartPollWorkflow(s.temporalClient, workflowID, config)
+	if err != nil {
+		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
+	}
+
+	c.Response().Header().Set("HX-Redirect", "/poll/"+workflowID)
+	return c.NoContent(http.StatusOK)
+}
+
+// GetPollDetails renders the details page for a specific poll.
+func (s *APIServer) GetPollDetails(c echo.Context) error {
+	workflowID := c.Param("id")
+
+	// Query the workflow to get its state
+	// Note: We need to implement QueryPollWorkflow in client.go
+	state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
+	if err != nil {
+		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
+	}
+
+	config, err := QueryPollWorkflow[PollConfig](s.temporalClient, workflowID, "get_config")
+	if err != nil {
+		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
+	}
+
+	options, err := QueryPollWorkflow[[]string](s.temporalClient, workflowID, "get_options")
+	if err != nil {
+		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
+	}
+
+	return c.Render(http.StatusOK, "poll-details", echo.Map{
+		"Title":      "Poll Details",
+		"WorkflowID": workflowID,
+		"State":      state,
+		"Config":     config,
+		"Options":    options,
+	})
+}
+
+// GetPollResults renders the results partial for a specific poll.
+func (s *APIServer) GetPollResults(c echo.Context) error {
+	workflowID := c.Param("id")
+
+	state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
+	if err != nil {
+		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
+	}
+
+	config, err := QueryPollWorkflow[PollConfig](s.temporalClient, workflowID, "get_config")
+	if err != nil {
+		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
+	}
+
+	// HTMX requests expect a partial, so we render the results template directly.
+	return c.Render(http.StatusOK, "poll-results", echo.Map{
+		"WorkflowID": workflowID,
+		"State":      state,
+		"Config":     config,
+	})
+}
+
+// VoteOnPoll handles a vote submission for a poll.
+func (s *APIServer) VoteOnPoll(c echo.Context) error {
+	workflowID := c.Param("id")
+
+	signal := VoteSignal{
+		UserID: c.FormValue("user_id"),
+		Option: c.FormValue("option"),
+		Amount: 1, // Each vote counts as 1
+	}
+
+	// Note: We need to implement SignalPollWorkflow in client.go
+	err := SignalPollWorkflow(s.temporalClient, workflowID, "vote", signal)
+	if err != nil {
+		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
+	}
+
+	// After sending the signal, we return the updated results partial.
+	return s.GetPollResults(c)
 }
 
 // HomePage renders the home page

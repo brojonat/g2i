@@ -1,0 +1,69 @@
+{{define "content"}}
+<div class="bg-light p-4 rounded border shadow-sm">
+  <h2>Create a New Poll</h2>
+  <form hx-post="/poll" hx-target="body" hx-push-url="true">
+    <div class="form-group">
+      <label for="question">Poll Question</label>
+      <input
+        type="text"
+        id="question"
+        name="question"
+        class="form-control"
+        required
+      />
+    </div>
+    <div class="form-group">
+      <label for="allowed_options">Allowed Options</label>
+      <input
+        class="form-control"
+        type="search"
+        name="search"
+        placeholder="Begin Typing To Search For Meme Creators..."
+        hx-post="/poll/search-creators"
+        hx-trigger="input changed delay:500ms, load"
+        hx-target="#search-results"
+        hx-indicator=".htmx-indicator"
+      />
+      <span class="htmx-indicator"> Searching... </span>
+      <div id="search-results" class="mt-2">
+        <!-- Search results will be loaded here -->
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="duration_seconds">Duration (in seconds)</label>
+      <input
+        type="number"
+        id="duration_seconds"
+        name="duration_seconds"
+        class="form-control"
+        value="3600"
+      />
+    </div>
+    <div class="form-check">
+      <input
+        type="checkbox"
+        id="single_vote"
+        name="single_vote"
+        class="form-check-input"
+        value="true"
+      />
+      <label for="single_vote" class="form-check-label"
+        >Single Vote Per User</label
+      >
+    </div>
+    <div class="form-check">
+      <input
+        type="checkbox"
+        id="start_blocked"
+        name="start_blocked"
+        class="form-check-input"
+        value="true"
+      />
+      <label for="start_blocked" class="form-check-label"
+        >Wait for 'start' signal</label
+      >
+    </div>
+    <button type="submit" class="btn btn-primary mt-3">Create Poll</button>
+  </form>
+</div>
+{{end}}
