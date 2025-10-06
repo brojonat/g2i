@@ -17,6 +17,7 @@ import (
 
 	"github.com/chai2010/webp"
 	"github.com/nfnt/resize"
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"google.golang.org/genai"
 )
@@ -215,6 +216,15 @@ func parseResponsesOutput(body []byte) (assistantText string, toolCalls []ToolCa
 	return strings.TrimSpace(strings.Join(textBuilder, "\n")), calls, responseID, nil
 }
 
+// CopyObjectInput defines the input for the CopyObject activity.
+type CopyObjectInput struct {
+	StorageProvider   string
+	SourceBucket      string
+	SourceKey         string
+	DestinationBucket string
+	DestinationKey    string
+}
+
 // GeneratePrompt creates a "report card" prompt for content generation based on GitHub profile
 func GenerateContentGenerationPrompt(ctx context.Context, profile GitHubProfile, systemPrompt string) (string, error) {
 	// Build a comprehensive "report card" prompt that grounds the profile in cultural context
@@ -360,24 +370,57 @@ func GenerateContent(ctx context.Context, prompt, modelName, imageFormat string,
 	}, nil
 }
 
+// CopyObject copies an object from one location to another in the object storage.
+func CopyObject(ctx context.Context, input CopyObjectInput) error {
+	logger := activity.GetLogger(ctx)
+	logger.Info("Copying object", "from", input.SourceKey, "to", input.DestinationKey)
+
+	storage := NewObjectStorage(input.StorageProvider)
+
+	err := storage.Copy(ctx, input.SourceBucket, input.SourceKey, input.DestinationBucket, input.DestinationKey)
+	if err != nil {
+		logger.Error("Failed to copy object", "error", err)
+		return fmt.Errorf("failed to copy object: %w", err)
+	}
+
+	logger.Info("Successfully copied object")
+	return nil
+}
+
+// StoreContentOutput is the output from the StoreContent activity.
+type StoreContentOutput struct {
+	PublicURL   string
+	StorageKey  string
+	ContentType string
+}
+
 // StoreContent stores content in object storage using the generic interface
-func StoreContent(ctx context.Context, data []byte, provider, bucket, key, username, contentType string) (string, error) {
+func StoreContent(ctx context.Context, data []byte, provider, bucket, key, keyPrefix, contentType string) (StoreContentOutput, error) {
 	if provider == "" {
 		// This case should be handled by the caller; if no provider, don't call this.
 		// For now, we'll return an error.
-		return "", fmt.Errorf("storage provider cannot be empty")
+		return StoreContentOutput{}, fmt.Errorf("storage provider cannot be empty")
 	}
 
 	// Generate a key if none provided
 	if key == "" {
-		key = generateStorageKey(username, contentType)
+		key = generateStorageKey(keyPrefix, contentType)
 	}
 
 	// Create storage instance
 	storage := NewObjectStorage(provider)
 
 	// Store the content
-	return storage.Store(ctx, data, bucket, key, contentType)
+	publicURL, err := storage.Store(ctx, data, bucket, key, contentType)
+	if err != nil {
+		return StoreContentOutput{}, err
+	}
+
+	return StoreContentOutput{
+		PublicURL:   publicURL,
+		StorageKey:  key,
+		ContentType: contentType,
+	}, nil
 }
 
 // Helper functions for formatting

@@ -72,11 +72,13 @@ func runWorker(ctx context.Context, wg *sync.WaitGroup) {
 	w.RegisterWorkflow(RunContentGenerationWorkflow)
 	w.RegisterWorkflow(AgenticScrapeGitHubProfileWorkflow)
 	w.RegisterWorkflow(PollWorkflow)
+	w.RegisterWorkflow(GeneratePollImagesWorkflow)
 	w.RegisterActivity(GenerateContentGenerationPrompt)
 	w.RegisterActivity(GenerateContent)
 	w.RegisterActivity(StoreContent)
 	w.RegisterActivity(ExecuteGhCommandActivity)
 	w.RegisterActivity(GenerateResponsesTurnActivity)
+	w.RegisterActivity(CopyObject)
 
 	// Start worker
 	stdlog.Println("Starting worker...")

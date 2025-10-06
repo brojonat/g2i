@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 
+	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 )
@@ -61,13 +62,30 @@ func GetWorkflowDescription(c client.Client, workflowID string) (*workflowservic
 // StartPollWorkflow starts the poll workflow.
 func StartPollWorkflow(c client.Client, workflowID string, config PollConfig) (client.WorkflowRun, error) {
 	options := client.StartWorkflowOptions{
-		ID:        workflowID,
-		TaskQueue: os.Getenv("TEMPORAL_TASK_QUEUE"),
+		ID:                    workflowID,
+		TaskQueue:             os.Getenv("TEMPORAL_TASK_QUEUE"),
+		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 	}
 
 	we, err := c.ExecuteWorkflow(context.Background(), options, PollWorkflow, config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to start poll workflow: %w", err)
+		return nil, err
+	}
+
+	log.Printf("Started workflow with ID: %s, RunID: %s", we.GetID(), we.GetRunID())
+	return we, nil
+}
+
+// StartPollImageGenerationWorkflow starts the poll image generation workflow.
+func StartPollImageGenerationWorkflow(c client.Client, workflowID string, input PollImageGenerationInput) (client.WorkflowRun, error) {
+	options := client.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: os.Getenv("TEMPORAL_TASK_QUEUE"),
+	}
+
+	we, err := c.ExecuteWorkflow(context.Background(), options, GeneratePollImagesWorkflow, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start poll image generation workflow: %w", err)
 	}
 
 	log.Printf("Started workflow with ID: %s, RunID: %s", we.GetID(), we.GetRunID())

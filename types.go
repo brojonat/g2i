@@ -16,6 +16,7 @@ type AppInput struct {
 	StorageProvider               string `json:"storage_provider"` // "minio", "s3", "gcs", etc.
 	StorageBucket                 string `json:"storage_bucket"`
 	StorageKey                    string `json:"storage_key,omitempty"` // Optional: custom storage key
+	PollID                        string `json:"poll_id,omitempty"`     // Optional: if content is for a poll
 }
 
 // AppOutput represents the output of the content generation workflow
@@ -24,9 +25,11 @@ type AppOutput struct {
 	ContentGenerationPrompt string        `json:"content_generation_prompt"`
 	ContentURL              string        `json:"content_url"`
 	ImageFormat             string        `json:"image_format,omitempty"`
+	ContentType             string        `json:"content_type,omitempty"`
 	ImageWidth              int           `json:"image_width,omitempty"`
 	ImageHeight             int           `json:"image_height,omitempty"`
 	StorageURL              string        `json:"storage_url,omitempty"`
+	StorageKey              string        `json:"storage_key,omitempty"`
 	CreatedAt               time.Time     `json:"created_at"`
 }
 
@@ -97,4 +100,25 @@ type GenerateResponsesTurnResult struct {
 	Assistant string     `json:"assistant"`
 	Calls     []ToolCall `json:"calls"`
 	ID        string     `json:"id"`
+}
+
+// ParsedPollRequest holds the structured data extracted from the user's poll request.
+type ParsedPollRequest struct {
+	Question  string   `json:"question"`
+	Usernames []string `json:"usernames"`
+}
+
+type GenerationResult struct {
+	Prompt      string
+	ImageData   []byte
+	PublicURL   string
+	StorageKey  string
+	ContentType string
+}
+
+// PollImageGenerationInput defines the input for the GeneratePollImagesWorkflow.
+type PollImageGenerationInput struct {
+	Usernames []string
+	PollID    string
+	AppInput  AppInput
 }

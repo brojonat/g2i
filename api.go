@@ -1,20 +1,27 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/base64"
+	"fmt"
 	"html/template"
 	"io"
 	"net/http"
 	"os"
+	"path"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
+	"golang.org/x/exp/errors"
 )
 
 // requestLogger is a custom middleware that logs only failed requests (4xx and 5xx).
@@ -54,11 +61,16 @@ func (t *TemplateRenderer) Render(w io.Writer, name string, data interface{}, c 
 		return echo.NewHTTPError(http.StatusInternalServerError, "Template not found: "+name)
 	}
 
-	// For HTMX requests, render only the content block.
-	// Otherwise, render the full page with the base layout.
 	isHTMX := c.Request().Header.Get("HX-Request") == "true"
 	if isHTMX {
-		return tmpl.ExecuteTemplate(w, "content", data)
+		// For HTMX requests, we determine if we're rendering a partial or a full content swap.
+		// Our convention: if a template defines a block with the same name as the template key,
+		// it's a partial and we render that block. Otherwise, we render the "content" block.
+		block := "content"
+		if tmpl.Lookup(name) != nil {
+			block = name
+		}
+		return tmpl.ExecuteTemplate(w, block, data)
 	}
 
 	return tmpl.ExecuteTemplate(w, "base.html", data)
@@ -89,9 +101,8 @@ func createMyRender() *TemplateRenderer {
 	r.templates["workflow-details"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/workflow-details.html"))
 	r.templates["error"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/error.html"))
 	r.templates["poll-form"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/poll-form.html"))
-	r.templates["poll-details"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/poll-details.html", "templates/poll-results.html"))
-	r.templates["poll-results"] = template.Must(template.ParseFS(templateFS, "templates/poll-results.html"))
-	r.templates["poll-creator-search-results"] = template.Must(template.ParseFS(templateFS, "templates/poll-creator-search-results.html"))
+	r.templates["poll-details"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/poll-details.html", "templates/poll-results-partial.html"))
+	r.templates["poll-results-partial"] = template.Must(template.ParseFS(templateFS, "templates/poll-results-partial.html"))
 	r.templates["generate-form"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/generate-form.html"))
 
 	return r
@@ -208,7 +219,6 @@ func (s *APIServer) SetupRoutes() *echo.Echo {
 	// Poll routes
 	e.GET("/poll/new", s.ShowPollForm)
 	e.POST("/poll", s.CreatePoll)
-	e.POST("/poll/search-creators", s.SearchMemeCreators)
 	e.GET("/poll/:id", s.GetPollDetails)
 	e.GET("/poll/:id/results", s.GetPollResults)
 	e.POST("/poll/:id/vote", s.VoteOnPoll)
@@ -236,58 +246,129 @@ func (s *APIServer) ShowPollForm(c echo.Context) error {
 	})
 }
 
-// SearchMemeCreators handles the active search for meme creators.
-func (s *APIServer) SearchMemeCreators(c echo.Context) error {
-	searchTerm := c.FormValue("search")
-	bucket := os.Getenv("STORAGE_BUCKET")
-	if bucket == "" {
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": "STORAGE_BUCKET environment variable not set"})
-	}
-
-	allCreators, err := s.storageProvider.ListTopLevelFolders(c.Request().Context(), bucket)
-	if err != nil {
-		// In an HTMX context, it might be better to return a partial with an error message.
-		return c.String(http.StatusInternalServerError, "Error fetching creators: "+err.Error())
-	}
-
-	var filteredCreators []string
-	if searchTerm == "" {
-		filteredCreators = allCreators
-	} else {
-		for _, creator := range allCreators {
-			if strings.Contains(strings.ToLower(creator), strings.ToLower(searchTerm)) {
-				filteredCreators = append(filteredCreators, creator)
-			}
-		}
-	}
-
-	return c.Render(http.StatusOK, "poll-creator-search-results", echo.Map{
-		"Creators": filteredCreators,
-	})
-}
-
 // CreatePoll handles the creation of a new poll workflow.
 func (s *APIServer) CreatePoll(c echo.Context) error {
+	pollRequest := c.FormValue("poll_request")
+	if pollRequest == "" {
+		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Poll request cannot be empty"})
+	}
+
+	// Use the LLM to parse the poll request.
+	parsedRequest, err := ParsePollRequestWithLLM(c.Request().Context(), pollRequest)
+	if err != nil {
+		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": "Failed to parse poll request: " + err.Error()})
+	}
+
 	// All polls run for one week.
 	duration := 604800 // 7 * 24 * 60 * 60
 
-	// For a multi-select form, we need to get all values.
-	allowedOptions := c.Request().Form["allowed_options"]
-
 	config := PollConfig{
-		Question:        c.FormValue("question"),
-		AllowedOptions:  allowedOptions,
+		Question:        parsedRequest.Question,
+		AllowedOptions:  parsedRequest.Usernames,
 		DurationSeconds: duration,
-		SingleVote:      c.FormValue("single_vote") == "true",
-		StartBlocked:    c.FormValue("start_blocked") == "true",
+		SingleVote:      false,
+		StartBlocked:    false,
 	}
 
-	// Generate a unique ID for the workflow
-	workflowID := "poll-" + uuid.New().String()
+	// Generate a unique ID for the workflow from the poll question.
+	workflowID := "poll-" + sanitizeWorkflowID(parsedRequest.Question)
 
-	_, err := StartPollWorkflow(s.temporalClient, workflowID, config)
+	_, err = StartPollWorkflow(s.temporalClient, workflowID, config)
 	if err != nil {
+		// If the workflow already exists, it's not an error.
+		// We just redirect to the existing poll.
+		var workflowExistsErr *serviceerror.WorkflowExecutionAlreadyStarted
+		if errors.As(err, &workflowExistsErr) {
+			c.Response().Header().Set("HX-Redirect", "/poll/"+workflowID)
+			return c.NoContent(http.StatusOK)
+		}
+
+		// For any other error, return a 500.
 		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
+	}
+
+	// Get a list of all users who already have generated content.
+	existingCreators, err := s.storageProvider.ListTopLevelFolders(c.Request().Context(), os.Getenv("STORAGE_BUCKET"))
+	if err != nil {
+		// Log the error but don't block poll creation, as this is a non-critical optimization.
+		c.Logger().Errorf("Failed to list existing creators: %v", err)
+		existingCreators = []string{} // Proceed with an empty list
+	}
+
+	// Create a set for quick lookups.
+	existingCreatorsSet := make(map[string]struct{})
+	for _, creator := range existingCreators {
+		existingCreatorsSet[creator] = struct{}{}
+	}
+
+	// Correctly separate users who need image generation from those who have existing images.
+	filteredUsernames := []string{} // Users for whom we will generate new images.
+	existingUsernames := []string{} // Users whose existing images we will copy.
+	for _, username := range parsedRequest.Usernames {
+		if _, exists := existingCreatorsSet[username]; !exists {
+			filteredUsernames = append(filteredUsernames, username)
+		} else {
+			existingUsernames = append(existingUsernames, username)
+		}
+	}
+
+	// For users who already have images, copy their latest image to the poll's folder in the background.
+	for _, username := range existingUsernames {
+		go func(user string) {
+			bucket := os.Getenv("STORAGE_BUCKET")
+
+			// 1. Find the latest existing object for the user.
+			// Use context.Background() because the request context will be canceled.
+			latestKey, err := s.storageProvider.GetLatestObjectKeyForUser(context.Background(), bucket, user)
+			if err != nil {
+				c.Logger().Errorf("Failed to find latest image for user %s: %v", user, err)
+				return // Skip copying for this user
+			}
+
+			// 2. Construct the new destination key inside the poll's folder.
+			parts := strings.Split(latestKey, "/")
+			filename := parts[len(parts)-1]
+			fileExt := strings.TrimPrefix(path.Ext(filename), ".")
+			dstKey := fmt.Sprintf("%s/%s.%s", workflowID, user, fileExt)
+
+			// 3. Perform the copy operation.
+			err = s.storageProvider.Copy(context.Background(), bucket, latestKey, bucket, dstKey)
+			if err != nil {
+				c.Logger().Errorf("Failed to copy image for user %s to poll folder: %v", user, err)
+			}
+		}(username)
+	}
+
+	// After the poll is created, kick off the content generation workflows for each new user.
+	if len(filteredUsernames) > 0 {
+		width, _ := strconv.Atoi(os.Getenv("IMAGE_WIDTH"))
+		height, _ := strconv.Atoi(os.Getenv("IMAGE_HEIGHT"))
+		baseInput := AppInput{
+			ModelName:                     os.Getenv("GEMINI_MODEL"),
+			ResearchAgentSystemPrompt:     getEnvB64("RESEARCH_AGENT_SYSTEM_PROMPT"),
+			ContentGenerationSystemPrompt: getEnvB64("CONTENT_GENERATION_SYSTEM_PROMPT"),
+			StorageProvider:               os.Getenv("STORAGE_PROVIDER"),
+			StorageBucket:                 os.Getenv("STORAGE_BUCKET"),
+			ImageFormat:                   os.Getenv("IMAGE_FORMAT"),
+			ImageWidth:                    width,
+			ImageHeight:                   height,
+		}
+
+		workflowInput := PollImageGenerationInput{
+			Usernames: filteredUsernames,
+			PollID:    workflowID,
+			AppInput:  baseInput,
+		}
+
+		// We start this workflow and forget about it. It runs in the background.
+		// A unique ID prevents multiple image generation workflows for the same poll.
+		imageGenWorkflowID := "poll-image-generation-" + workflowID
+		go func() {
+			_, err := StartPollImageGenerationWorkflow(s.temporalClient, imageGenWorkflowID, workflowInput)
+			if err != nil {
+				c.Logger().Errorf("Failed to start poll image generation workflow: %v", err)
+			}
+		}()
 	}
 
 	c.Response().Header().Set("HX-Redirect", "/poll/"+workflowID)
@@ -315,12 +396,35 @@ func (s *APIServer) GetPollDetails(c echo.Context) error {
 		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
 	}
 
+	// Fetch image URLs for each poll option.
+	imageURLs := make(map[string]string)
+	bucket := os.Getenv("STORAGE_BUCKET")
+
+	// List all objects in the poll's "folder".
+	pollObjectKeys, err := s.storageProvider.List(c.Request().Context(), bucket, workflowID+"/")
+	if err != nil {
+		// Log the error but don't fail the request. The UI can handle missing images.
+		c.Logger().Errorf("Failed to list images for poll %s: %v", workflowID, err)
+	} else {
+		for _, key := range pollObjectKeys {
+			// The object key is something like "poll-workflow-id/username.png".
+			// We extract the username to map it to the image URL.
+			parts := strings.Split(key, "/")
+			if len(parts) > 1 {
+				filename := parts[len(parts)-1]
+				username := strings.Split(filename, ".")[0]
+				imageURLs[username] = s.storageProvider.GetURL(bucket, key)
+			}
+		}
+	}
+
 	return c.Render(http.StatusOK, "poll-details", echo.Map{
 		"Title":      "Poll Details",
 		"WorkflowID": workflowID,
 		"State":      state,
 		"Config":     config,
 		"Options":    options,
+		"ImageURLs":  imageURLs,
 	})
 }
 
@@ -337,12 +441,40 @@ func (s *APIServer) GetPollResults(c echo.Context) error {
 	if err != nil {
 		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
 	}
+	options, err := QueryPollWorkflow[[]string](s.temporalClient, workflowID, "get_options")
+	if err != nil {
+		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
+	}
+
+	// Fetch image URLs for each poll option.
+	imageURLs := make(map[string]string)
+	bucket := os.Getenv("STORAGE_BUCKET")
+
+	// List all objects in the poll's "folder".
+	pollObjectKeys, err := s.storageProvider.List(c.Request().Context(), bucket, workflowID+"/")
+	if err != nil {
+		// Log the error but don't fail the request. The UI can handle missing images.
+		c.Logger().Errorf("Failed to list images for poll %s: %v", workflowID, err)
+	} else {
+		for _, key := range pollObjectKeys {
+			// The object key is something like "poll-workflow-id/username.png".
+			// We extract the username to map it to the image URL.
+			parts := strings.Split(key, "/")
+			if len(parts) > 1 {
+				filename := parts[len(parts)-1]
+				username := strings.Split(filename, ".")[0]
+				imageURLs[username] = s.storageProvider.GetURL(bucket, key)
+			}
+		}
+	}
 
 	// HTMX requests expect a partial, so we render the results template directly.
-	return c.Render(http.StatusOK, "poll-results", echo.Map{
+	return c.Render(http.StatusOK, "poll-results-partial", echo.Map{
 		"WorkflowID": workflowID,
 		"State":      state,
 		"Config":     config,
+		"Options":    options,
+		"ImageURLs":  imageURLs,
 	})
 }
 
@@ -350,14 +482,32 @@ func (s *APIServer) GetPollResults(c echo.Context) error {
 func (s *APIServer) VoteOnPoll(c echo.Context) error {
 	workflowID := c.Param("id")
 
+	// Get or create a unique voter ID from a cookie.
+	voterCookie, err := c.Cookie("voter_id")
+	var voterID string
+	if err != nil || voterCookie.Value == "" {
+		voterID = uuid.New().String()
+		cookie := &http.Cookie{
+			Name:     "voter_id",
+			Value:    voterID,
+			Expires:  time.Now().Add(365 * 24 * time.Hour), // Expire in one year
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		}
+		c.SetCookie(cookie)
+	} else {
+		voterID = voterCookie.Value
+	}
+
 	signal := VoteSignal{
-		UserID: c.FormValue("user_id"),
+		UserID: voterID,
 		Option: c.FormValue("option"),
 		Amount: 1, // Each vote counts as 1
 	}
 
 	// Note: We need to implement SignalPollWorkflow in client.go
-	err := SignalPollWorkflow(s.temporalClient, workflowID, "vote", signal)
+	err = SignalPollWorkflow(s.temporalClient, workflowID, "vote", signal)
 	if err != nil {
 		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
 	}
@@ -470,4 +620,21 @@ func customHTTPErrorHandler(err error, c echo.Context) {
 
 	// For all other errors, use the default Echo error handler.
 	c.Echo().DefaultHTTPErrorHandler(err, c)
+}
+
+func sanitizeWorkflowID(input string) string {
+	// Replace non-alphanumeric characters with a hyphen.
+	reg := regexp.MustCompile(`[^a-zA-Z0-9-_]+`)
+	sanitized := reg.ReplaceAllString(input, "-")
+
+	// Trim leading/trailing hyphens that might have been created.
+	sanitized = strings.ToLower(strings.Trim(sanitized, "-"))
+
+	// Enforce a max length for workflow IDs.
+	const maxLength = 200
+	if len(sanitized) > maxLength {
+		sanitized = sanitized[:maxLength]
+	}
+
+	return sanitized
 }

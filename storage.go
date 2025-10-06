@@ -15,7 +15,10 @@ import (
 // ObjectStorage defines the interface for object storage operations
 type ObjectStorage interface {
 	Store(ctx context.Context, data []byte, bucket, key, contentType string) (string, error)
+	List(ctx context.Context, bucket, prefix string) ([]string, error)
 	ListTopLevelFolders(ctx context.Context, bucket string) ([]string, error)
+	GetLatestObjectKeyForUser(ctx context.Context, bucket, username string) (string, error)
+	Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error
 	GetURL(bucket, key string) string
 }
 
@@ -87,6 +90,32 @@ func (s *S3CompatibleStorage) Store(ctx context.Context, data []byte, bucket, ke
 	return s.GetURL(bucket, key), nil
 }
 
+// List lists objects in an S3-compatible bucket with a given prefix.
+func (s *S3CompatibleStorage) List(ctx context.Context, bucket, prefix string) ([]string, error) {
+	client, err := minio.New(s.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(s.AccessKey, s.SecretKey, ""),
+		Secure: s.UseSSL,
+		Region: s.Region,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create S3-compatible client: %w", err)
+	}
+
+	objectCh := client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	})
+
+	var objects []string
+	for object := range objectCh {
+		if object.Err != nil {
+			return nil, fmt.Errorf("failed during object listing: %w", object.Err)
+		}
+		objects = append(objects, object.Key)
+	}
+	return objects, nil
+}
+
 // ListTopLevelFolders lists "directories" at the root of a bucket.
 func (s *S3CompatibleStorage) ListTopLevelFolders(ctx context.Context, bucket string) ([]string, error) {
 	client, err := minio.New(s.Endpoint, &minio.Options{
@@ -125,6 +154,78 @@ func (s *S3CompatibleStorage) ListTopLevelFolders(ctx context.Context, bucket st
 	}
 
 	return folderList, nil
+}
+
+// GetLatestObjectKeyForUser finds the most recent object for a given user.
+func (s *S3CompatibleStorage) GetLatestObjectKeyForUser(ctx context.Context, bucket, username string) (string, error) {
+	client, err := minio.New(s.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(s.AccessKey, s.SecretKey, ""),
+		Secure: s.UseSSL,
+		Region: s.Region,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create S3-compatible client: %w", err)
+	}
+
+	prefix := username + "/"
+	objectCh := client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	})
+
+	var latestKey string
+	var latestTimestamp int64
+
+	for object := range objectCh {
+		if object.Err != nil {
+			return "", fmt.Errorf("failed during object listing: %w", object.Err)
+		}
+
+		// Extract timestamp from key: username/timestamp/content.ext
+		parts := strings.Split(strings.TrimPrefix(object.Key, prefix), "/")
+		if len(parts) >= 2 {
+			timestamp, err := time.Parse(time.RFC3339, object.LastModified.Format(time.RFC3339))
+			if err == nil {
+				if timestamp.Unix() > latestTimestamp {
+					latestTimestamp = timestamp.Unix()
+					latestKey = object.Key
+				}
+			}
+		}
+	}
+
+	if latestKey == "" {
+		return "", fmt.Errorf("no objects found for user: %s", username)
+	}
+
+	return latestKey, nil
+}
+
+// Copy performs a server-side copy of an object.
+func (s *S3CompatibleStorage) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error {
+	client, err := minio.New(s.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(s.AccessKey, s.SecretKey, ""),
+		Secure: s.UseSSL,
+		Region: s.Region,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create S3-compatible client: %w", err)
+	}
+
+	srcOpts := minio.CopySrcOptions{
+		Bucket: srcBucket,
+		Object: srcKey,
+	}
+	dstOpts := minio.CopyDestOptions{
+		Bucket: dstBucket,
+		Object: dstKey,
+	}
+
+	_, err = client.CopyObject(ctx, dstOpts, srcOpts)
+	if err != nil {
+		return fmt.Errorf("failed to copy object: %w", err)
+	}
+	return nil
 }
 
 // GetURL returns the PUBLIC URL for a stored object
@@ -167,10 +268,29 @@ func (s *S3Storage) Store(ctx context.Context, data []byte, bucket, key, content
 	return url, nil
 }
 
+// List for S3 (mock implementation)
+func (s *S3Storage) List(ctx context.Context, bucket, prefix string) ([]string, error) {
+	// Mock implementation for AWS S3
+	return []string{
+		prefix + "user1.png",
+		prefix + "user2.png",
+	}, nil
+}
+
 // ListTopLevelFolders for S3 (mock implementation)
 func (s *S3Storage) ListTopLevelFolders(ctx context.Context, bucket string) ([]string, error) {
 	// Mock implementation for AWS S3
 	return []string{"user1", "user2", "user3"}, nil
+}
+
+// GetLatestObjectKeyForUser for S3 (mock implementation)
+func (s *S3Storage) GetLatestObjectKeyForUser(ctx context.Context, bucket, username string) (string, error) {
+	return fmt.Sprintf("%s/1234567890/content.png", username), nil
+}
+
+// Copy for S3 (mock implementation)
+func (s *S3Storage) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error {
+	return nil
 }
 
 // GetURL returns the URL for a stored object
@@ -200,10 +320,29 @@ func (g *GCSStorage) Store(ctx context.Context, data []byte, bucket, key, conten
 	return url, nil
 }
 
+// List for GCS (mock implementation)
+func (g *GCSStorage) List(ctx context.Context, bucket, prefix string) ([]string, error) {
+	// Mock implementation for GCS
+	return []string{
+		prefix + "user1.png",
+		prefix + "user2.png",
+	}, nil
+}
+
 // ListTopLevelFolders for GCS (mock implementation)
 func (g *GCSStorage) ListTopLevelFolders(ctx context.Context, bucket string) ([]string, error) {
 	// Mock implementation for GCS
 	return []string{"user1", "user2", "user3"}, nil
+}
+
+// GetLatestObjectKeyForUser for GCS (mock implementation)
+func (g *GCSStorage) GetLatestObjectKeyForUser(ctx context.Context, bucket, username string) (string, error) {
+	return fmt.Sprintf("%s/1234567890/content.png", username), nil
+}
+
+// Copy for GCS (mock implementation)
+func (g *GCSStorage) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error {
+	return nil
 }
 
 // GetURL returns the URL for a stored object

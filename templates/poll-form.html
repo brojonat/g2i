@@ -1,34 +1,27 @@
 {{define "content"}}
 <div class="bg-light p-4 rounded border shadow-sm">
   <form hx-post="/poll" hx-target="body" hx-push-url="true">
-    <div class="form-group">
-      <label for="question">Poll Question</label>
-      <input
-        type="text"
-        id="question"
-        name="question"
-        class="form-control"
+    <div class="mb-4">
+      <label for="poll_request" class="block text-lg font-medium"
+        >Poll Request</label
+      >
+      <textarea
+        id="poll_request"
+        name="poll_request"
+        class="mt-2 block w-full rounded-md shadow-sm sm:text-lg"
+        rows="3"
+        placeholder="e.g., Who is the best meme creator: @user1, @user2, or @user3?"
         required
-      />
+      ></textarea>
     </div>
-    <div class="form-group">
-      <label for="allowed_options">Allowed Options</label>
-      <input
-        class="form-control"
-        type="search"
-        name="search"
-        placeholder="Begin Typing To Search For Meme Creators..."
-        hx-post="/poll/search-creators"
-        hx-trigger="input changed delay:500ms"
-        hx-target="#search-results"
-        hx-indicator=".htmx-indicator"
-      />
-      <span class="htmx-indicator"> Searching... </span>
-      <div id="search-results" class="mt-2">
-        <!-- Search results will be loaded here -->
-      </div>
+    <div class="mt-8">
+      <button
+        type="submit"
+        class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-lg font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+      >
+        Create Poll
+      </button>
     </div>
-    <button type="submit" class="btn btn-primary mt-3">Create Poll</button>
   </form>
 </div>
 {{end}}
