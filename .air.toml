@@ -6,7 +6,7 @@ tmp_dir = "bin"
 cmd = "go build -gcflags=\"all=-N -l\" -o ./bin/app ." 
 delay = 1000 # In milliseconds
 exclude_dir = ["bin"] 
-full_bin = "sh -c 'source .env.dev && ./bin/app'" 
+full_bin = "bash -c 'source .env.dev && ./bin/app'" 
 include_ext = ["go", "html"] 
 kill_delay = 2000 # In milliseconds
 stop_on_error = true 

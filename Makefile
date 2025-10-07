@@ -43,7 +43,7 @@ run-app: build
 	@echo "Updating prompts in .env.dev file..."
 	@# Remove old prompt variables to prevent duplication
 	@grep -vE '_SYSTEM_PROMPT=' .env.dev > .env.tmp && mv .env.tmp .env.dev
-	@make generate-prompts >> .env.dev
+	@$(MAKE) --no-print-directory generate-prompts >> .env.dev
 	@$(call setup_env, .env)
 	@echo "⏳ Waiting for Temporal frontend (port 7233) to be ready...";
 	@while ! nc -z 127.0.0.1 7233; do \
@@ -78,17 +78,19 @@ start-dev-session: build ## Start a new tmux development session
 	@echo "✅ Tmux session '$(TMUX_SESSION)' started."
 	@echo "Attach with: tmux attach-session -t $(TMUX_SESSION)"
 	@echo "Kill with: make stop-dev-session"
-	@tmux attach-session -t $(TMUX_SESSION)
+	@if [ -t 0 ]; then \
+		tmux attach-session -t $(TMUX_SESSION); \
+	else \
+		echo "Note: Not attaching to tmux (no TTY detected). Use 'tmux attach-session -t $(TMUX_SESSION)' manually."; \
+	fi
 
 stop-dev-session: ## Stop the tmux development session and kill related processes
-	@echo "Stopping background processes..."
-	@pkill -f "kubectl port-forward service/temporal-web" || true
-	@pkill -f "kubectl port-forward service/temporal-frontend" || true
-	@pkill -f "make run-app" || true
-	@pkill -f "./bin/app" || true
-	@sleep 1
 	@echo "Stopping tmux development session: $(TMUX_SESSION)"
 	@tmux kill-session -t $(TMUX_SESSION) 2>/dev/null || echo "No tmux session '$(TMUX_SESSION)' to stop."
+	@echo "Waiting for processes to terminate..."
+	@sleep 1
+	@echo "Cleaning up any remaining background processes..."
+	@killall kubectl 2>/dev/null || true
 
 # Prompt/env generation
 # ---------------------
@@ -96,10 +98,10 @@ stop-dev-session: ## Stop the tmux development session and kill related processe
 
 generate-prompts: ## Generate base64-encoded prompt env vars from prompts.yaml
 	@if ! command -v yq &> /dev/null; then \
-		echo "yq is not installed. Please install it to continue: pip install yq"; \
+		echo "yq is not installed. Please install it to continue: pip install yq" >&2; \
 		exit 1; \
 	fi
-	@yq -r 'to_entries | .[] | (.key | ascii_upcase | gsub("-";"_")) + "=" + (.value | @base64)' prompts.yaml
+	@yq eval 'to_entries | .[] | ((.key | upcase | sub("-"; "_")) + "=" + (.value | @base64))' prompts.yaml
 
 # Deployment
 # ---------------------
@@ -118,7 +120,7 @@ deploy-server: ## Deploy server to Kubernetes (prod)
 	@echo "Updating prompts in .env.prod file..."
 	@# Remove old prompt variables to prevent duplication
 	@grep -vE '_SYSTEM_PROMPT=' .env.prod > .env.tmp && mv .env.tmp .env.prod
-	@make generate-prompts >> .env.prod
+	@$(MAKE) --no-print-directory generate-prompts >> .env.prod
 	@GIT_HASH=$$(cat .git_hash); \
 	echo "Applying server deployment with image: $(DOCKER_REPO):$$GIT_HASH"; \
 	kustomize build --load-restrictor=LoadRestrictionsNone server/k8s/prod | \
@@ -131,7 +133,7 @@ deploy-worker: ## Deploy worker to Kubernetes (prod)
 	@echo "Updating prompts in .env.prod file..."
 	@# Remove old prompt variables to prevent duplication
 	@grep -vE '_SYSTEM_PROMPT=' .env.prod > .env.tmp && mv .env.tmp .env.prod
-	@make generate-prompts >> .env.prod
+	@$(MAKE) --no-print-directory generate-prompts >> .env.prod
 	@GIT_HASH=$$(cat .git_hash); \
 	echo "Applying worker deployment with image: $(DOCKER_REPO):$$GIT_HASH"; \
 	kustomize build --load-restrictor=LoadRestrictionsNone worker/k8s/prod | \
