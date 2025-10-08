@@ -79,8 +79,9 @@ func StartPollWorkflow(c client.Client, workflowID string, config PollConfig) (c
 // StartPollImageGenerationWorkflow starts the poll image generation workflow.
 func StartPollImageGenerationWorkflow(c client.Client, workflowID string, input PollImageGenerationInput) (client.WorkflowRun, error) {
 	options := client.StartWorkflowOptions{
-		ID:        workflowID,
-		TaskQueue: os.Getenv("TEMPORAL_TASK_QUEUE"),
+		ID:                    workflowID,
+		TaskQueue:             os.Getenv("TEMPORAL_TASK_QUEUE"),
+		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 	}
 
 	we, err := c.ExecuteWorkflow(context.Background(), options, GeneratePollImagesWorkflow, input)
@@ -111,6 +112,60 @@ func SignalPollWorkflow(c client.Client, workflowID string, signalName string, s
 	if err != nil {
 		return fmt.Errorf("failed to send signal '%s' to workflow: %w", signalName, err)
 	}
+	return nil
+}
+
+// CancelWorkflow cancels a running workflow. Returns nil if the workflow doesn't exist or is already completed/canceled.
+func CancelWorkflow(c client.Client, workflowID string, reason string) error {
+	// First check if the workflow exists and is still running
+	desc, err := c.DescribeWorkflowExecution(context.Background(), workflowID, "")
+	if err != nil {
+		// If workflow doesn't exist, consider it already canceled
+		log.Printf("Workflow %s does not exist or cannot be described: %v", workflowID, err)
+		return nil
+	}
+
+	// Check if workflow is already closed (completed, failed, canceled, terminated)
+	if desc.WorkflowExecutionInfo.Status != enums.WORKFLOW_EXECUTION_STATUS_RUNNING {
+		log.Printf("Workflow %s is not running (status: %s), skipping cancellation", workflowID, desc.WorkflowExecutionInfo.Status)
+		return nil
+	}
+
+	// Cancel the workflow
+	err = c.CancelWorkflow(context.Background(), workflowID, "")
+	if err != nil {
+		return fmt.Errorf("failed to cancel workflow: %w", err)
+	}
+
+	log.Printf("Successfully canceled workflow %s: %s", workflowID, reason)
+	return nil
+}
+
+// TerminateWorkflow terminates a workflow execution. This allows the workflow ID to be reused.
+// Returns nil if the workflow doesn't exist or is already in a closed state (completed, failed, canceled, terminated).
+func TerminateWorkflow(c client.Client, workflowID string, reason string) error {
+	// First check if the workflow exists
+	desc, err := c.DescribeWorkflowExecution(context.Background(), workflowID, "")
+	if err != nil {
+		// If workflow doesn't exist, nothing to terminate
+		log.Printf("Workflow %s does not exist or cannot be described: %v", workflowID, err)
+		return nil
+	}
+
+	// Check if workflow is already in a closed state (completed, failed, canceled, terminated, timed out, continued-as-new)
+	status := desc.WorkflowExecutionInfo.Status
+	if status != enums.WORKFLOW_EXECUTION_STATUS_RUNNING {
+		log.Printf("Workflow %s is already closed (status: %s), skipping termination", workflowID, status)
+		return nil
+	}
+
+	// Terminate the workflow
+	err = c.TerminateWorkflow(context.Background(), workflowID, "", reason)
+	if err != nil {
+		return fmt.Errorf("failed to terminate workflow: %w", err)
+	}
+
+	log.Printf("Successfully terminated workflow %s: %s", workflowID, reason)
 	return nil
 }
 

@@ -24,19 +24,23 @@ import (
 	"golang.org/x/exp/errors"
 )
 
-// requestLogger is a custom middleware that logs only failed requests (4xx and 5xx).
+// requestLogger is a custom middleware that logs all requests.
 func requestLogger(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
+		// Log the incoming request
+		c.Logger().Debugf("→ %s %s", c.Request().Method, c.Request().RequestURI)
+
 		// Call the next handler in the chain
 		err := next(c)
 
 		// Get the response status code
 		status := c.Response().Status
 
-		// Only log if the status code indicates an error
+		// Log the response
 		if status >= 400 {
-			c.Logger().Errorf("Request failed: status=%d, method=%s, uri=%s",
-				status, c.Request().Method, c.Request().RequestURI)
+			c.Logger().Errorf("← %s %s - %d (error)", c.Request().Method, c.Request().RequestURI, status)
+		} else {
+			c.Logger().Debugf("← %s %s - %d", c.Request().Method, c.Request().RequestURI, status)
 		}
 
 		return err
@@ -191,7 +195,7 @@ func (s *APIServer) GetWorkflowStatus(c echo.Context) error {
 // SetupRoutes sets up the API routes
 func (s *APIServer) SetupRoutes() *echo.Echo {
 	e := echo.New()
-	e.Logger.SetLevel(log.INFO)
+	e.Logger.SetLevel(log.DEBUG)
 
 	e.HTTPErrorHandler = customHTTPErrorHandler
 
@@ -222,6 +226,7 @@ func (s *APIServer) SetupRoutes() *echo.Echo {
 	e.GET("/poll/:id", s.GetPollDetails)
 	e.GET("/poll/:id/results", s.GetPollResults)
 	e.POST("/poll/:id/vote", s.VoteOnPoll)
+	e.DELETE("/poll/:id", s.DeletePoll)
 
 	// Visualization routes
 	e.GET("/visualization-form", s.GetVisualizationForm)
@@ -514,6 +519,37 @@ func (s *APIServer) VoteOnPoll(c echo.Context) error {
 
 	// After sending the signal, we return the updated results partial.
 	return s.GetPollResults(c)
+}
+
+// DeletePoll deletes all poll-related objects from storage and terminates associated workflows.
+func (s *APIServer) DeletePoll(c echo.Context) error {
+	pollID := c.Param("id")
+	bucket := os.Getenv("STORAGE_BUCKET")
+
+	// Terminate the poll workflow to allow workflow ID reuse
+	err := TerminateWorkflow(s.temporalClient, pollID, "Poll deleted by user")
+	if err != nil {
+		c.Logger().Warnf("Failed to terminate poll workflow %s: %v", pollID, err)
+		// Continue with deletion even if termination fails
+	}
+
+	// Terminate the image generation workflow to allow workflow ID reuse
+	imageGenWorkflowID := "poll-image-generation-" + pollID
+	err = TerminateWorkflow(s.temporalClient, imageGenWorkflowID, "Poll deleted by user")
+	if err != nil {
+		c.Logger().Warnf("Failed to terminate image generation workflow %s: %v", imageGenWorkflowID, err)
+		// Continue with deletion even if termination fails
+	}
+
+	// Delete all objects with the poll ID as the prefix
+	err = s.storageProvider.Delete(c.Request().Context(), bucket, pollID+"/")
+	if err != nil {
+		c.Logger().Errorf("Failed to delete poll storage %s: %v", pollID, err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to delete poll: " + err.Error()})
+	}
+
+	c.Logger().Infof("Successfully deleted poll %s", pollID)
+	return c.JSON(http.StatusOK, echo.Map{"message": "Poll deleted successfully"})
 }
 
 // HomePage renders the home page

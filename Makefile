@@ -44,7 +44,7 @@ run-app: build
 	@# Remove old prompt variables to prevent duplication
 	@grep -vE '_SYSTEM_PROMPT=' .env.dev > .env.tmp && mv .env.tmp .env.dev
 	@$(MAKE) --no-print-directory generate-prompts >> .env.dev
-	@$(call setup_env, .env)
+	@$(call setup_env, .env.dev)
 	@echo "⏳ Waiting for Temporal frontend (port 7233) to be ready...";
 	@while ! nc -z 127.0.0.1 7233; do \
 	  sleep 0.5; \

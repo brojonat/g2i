@@ -282,16 +282,16 @@ type GenerateContentOutput struct {
 }
 
 // GenerateContent uses a frontier model to generate content and optionally convert it
-func GenerateContent(ctx context.Context, prompt, modelName, imageFormat string, imageWidth, imageHeight int) (GenerateContentOutput, error) {
+func GenerateContent(ctx context.Context, prompt, modelName, imageFormat string, imageWidth, imageHeight int) (GenerationResult, error) {
 	apiKey := os.Getenv("GOOGLE_API_KEY")
 	if apiKey == "" {
-		return GenerateContentOutput{}, fmt.Errorf("GOOGLE_API_KEY environment variable not set")
+		return GenerationResult{}, fmt.Errorf("GOOGLE_API_KEY environment variable not set")
 	}
 
 	// Initialize Gemini client. It will use the GOOGLE_API_KEY environment variable if it is set.
 	client, err := genai.NewClient(ctx, nil)
 	if err != nil {
-		return GenerateContentOutput{}, fmt.Errorf("failed to create genai client: %w", err)
+		return GenerationResult{}, fmt.Errorf("failed to create genai client: %w", err)
 	}
 
 	// Generate the image
@@ -302,11 +302,11 @@ func GenerateContent(ctx context.Context, prompt, modelName, imageFormat string,
 		nil,
 	)
 	if err != nil {
-		return GenerateContentOutput{}, fmt.Errorf("failed to generate content: %w", err)
+		return GenerationResult{}, fmt.Errorf("failed to generate content: %w", err)
 	}
 
 	if result.Candidates == nil || len(result.Candidates) == 0 || result.Candidates[0].Content == nil || len(result.Candidates[0].Content.Parts) == 0 {
-		return GenerateContentOutput{}, fmt.Errorf("no content returned from API")
+		return GenerationResult{}, fmt.Errorf("no content returned from API")
 	}
 
 	var originalImageData []byte
@@ -318,12 +318,12 @@ func GenerateContent(ctx context.Context, prompt, modelName, imageFormat string,
 	}
 
 	if originalImageData == nil {
-		return GenerateContentOutput{}, fmt.Errorf("no image data returned")
+		return GenerationResult{}, fmt.Errorf("no image data returned")
 	}
 
 	// If no format or dimensions are specified, return the original image
 	if imageFormat == "" && imageWidth == 0 && imageHeight == 0 {
-		return GenerateContentOutput{
+		return GenerationResult{
 			ImageData:   originalImageData,
 			ContentType: "image/png", // Assuming default is png
 		}, nil
@@ -331,7 +331,7 @@ func GenerateContent(ctx context.Context, prompt, modelName, imageFormat string,
 
 	img, _, err := image.Decode(bytes.NewReader(originalImageData))
 	if err != nil {
-		return GenerateContentOutput{}, fmt.Errorf("failed to decode image: %w", err)
+		return GenerationResult{}, fmt.Errorf("failed to decode image: %w", err)
 	}
 
 	// Resize the image if dimensions are provided
@@ -354,17 +354,17 @@ func GenerateContent(ctx context.Context, prompt, modelName, imageFormat string,
 		err = png.Encode(&buf, img)
 	default:
 		// If an unsupported format is specified, return the original image
-		return GenerateContentOutput{
+		return GenerationResult{
 			ImageData:   originalImageData,
 			ContentType: "image/png",
 		}, nil
 	}
 
 	if err != nil {
-		return GenerateContentOutput{}, fmt.Errorf("failed to encode image to %s: %w", imageFormat, err)
+		return GenerationResult{}, fmt.Errorf("failed to encode image to %s: %w", imageFormat, err)
 	}
 
-	return GenerateContentOutput{
+	return GenerationResult{
 		ImageData:   buf.Bytes(),
 		ContentType: contentType,
 	}, nil
