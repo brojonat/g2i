@@ -101,6 +101,12 @@ func GeneratePollImagesWorkflow(ctx workflow.Context, input PollImageGenerationI
 	logger := workflow.GetLogger(ctx)
 	logger.Info("Starting poll image generation workflow", "PollID", input.PollID, "UserCount", len(input.Usernames))
 
+	// Set activity options for CopyObject activity
+	ao := workflow.ActivityOptions{
+		StartToCloseTimeout: 5 * time.Minute,
+	}
+	ctx = workflow.WithActivityOptions(ctx, ao)
+
 	cwo := workflow.ChildWorkflowOptions{}
 	ctx = workflow.WithChildOptions(ctx, cwo)
 
@@ -110,26 +116,37 @@ func GeneratePollImagesWorkflow(ctx workflow.Context, input PollImageGenerationI
 		childInput := input.AppInput
 		childInput.GitHubUsername = username
 
-		childWorkflowFuture := workflow.ExecuteChildWorkflow(ctx, RunContentGenerationWorkflow, childInput)
+		// Use deterministic workflow IDs to prevent duplicate work on retries
+		childWorkflowID := fmt.Sprintf("content-generation-%s", username)
+		childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
+			WorkflowID: childWorkflowID,
+		})
+
+		childWorkflowFuture := workflow.ExecuteChildWorkflow(childCtx, RunContentGenerationWorkflow, childInput)
 		futures = append(futures, childWorkflowFuture)
 	}
+
+	var errors []string
+	successCount := 0
 
 	for _, future := range futures {
 		var childOutput AppOutput
 		if err := future.Get(ctx, &childOutput); err != nil {
+			errors = append(errors, fmt.Sprintf("Child workflow failed: %v", err))
 			logger.Error("Child workflow failed", "error", err)
-			// Decide if one failure should fail the whole workflow. For now, we'll just log and continue.
 			continue
 		}
 
 		// The image is now generated and stored under the user's "folder".
 		// Now, copy it to the poll's "folder".
 		if childOutput.StorageKey == "" {
+			errors = append(errors, fmt.Sprintf("Child workflow for %s did not return a storage key", childOutput.GitHubProfile.Username))
 			logger.Warn("Child workflow did not return a storage key")
 			continue
 		}
 		childInput := input.AppInput
 		if !strings.Contains(childOutput.ContentType, "/") {
+			errors = append(errors, fmt.Sprintf("Invalid content type for %s: %s", childOutput.GitHubProfile.Username, childOutput.ContentType))
 			logger.Warn("Child workflow returned invalid content type", "ContentType", childOutput.ContentType)
 			continue
 		}
@@ -146,13 +163,19 @@ func GeneratePollImagesWorkflow(ctx workflow.Context, input PollImageGenerationI
 
 		err := workflow.ExecuteActivity(ctx, CopyObject, copyActivityInput).Get(ctx, nil)
 		if err != nil {
+			errors = append(errors, fmt.Sprintf("Failed to copy %s: %v", destKey, err))
 			logger.Error("Failed to copy image to poll folder", "DestinationKey", destKey, "error", err)
-			// Again, decide on error handling. Continuing for now.
 		} else {
+			successCount++
 			logger.Info("Successfully copied image to poll folder", "DestinationKey", destKey)
 		}
 	}
 
-	logger.Info("Poll image generation workflow finished.")
+	if len(errors) > 0 {
+		logger.Warn("Poll image generation completed with errors", "SuccessCount", successCount, "ErrorCount", len(errors), "Errors", errors)
+	} else {
+		logger.Info("Poll image generation workflow finished successfully", "SuccessCount", successCount)
+	}
+
 	return nil
 }

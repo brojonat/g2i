@@ -334,6 +334,11 @@ func (s *APIServer) CreatePoll(c echo.Context) error {
 		}
 	}
 
+	// Log the operation summary
+	if len(existingUsernames) > 0 {
+		c.Logger().Infof("Copying existing images for %d users: %v", len(existingUsernames), existingUsernames)
+	}
+
 	// For users who already have images, copy their latest image to the poll's folder in the background.
 	for _, username := range existingUsernames {
 		go func(user string) {
@@ -343,7 +348,7 @@ func (s *APIServer) CreatePoll(c echo.Context) error {
 			// Use context.Background() because the request context will be canceled.
 			latestKey, err := s.storageProvider.GetLatestObjectKeyForUser(context.Background(), bucket, user)
 			if err != nil {
-				c.Logger().Errorf("Failed to find latest image for user %s: %v", user, err)
+				log.Printf("Failed to find latest image for user %s: %v", user, err)
 				return // Skip copying for this user
 			}
 
@@ -356,13 +361,17 @@ func (s *APIServer) CreatePoll(c echo.Context) error {
 			// 3. Perform the copy operation.
 			err = s.storageProvider.Copy(context.Background(), bucket, latestKey, bucket, dstKey)
 			if err != nil {
-				c.Logger().Errorf("Failed to copy image for user %s to poll folder: %v", user, err)
+				log.Printf("Failed to copy image for user %s to poll folder: %v", user, err)
+			} else {
+				log.Printf("Successfully copied existing image for user %s to poll folder", user)
 			}
 		}(username)
 	}
 
 	// After the poll is created, kick off the content generation workflows for each new user.
 	if len(filteredUsernames) > 0 {
+		c.Logger().Infof("Starting image generation for %d new users: %v", len(filteredUsernames), filteredUsernames)
+
 		width, _ := strconv.Atoi(os.Getenv("IMAGE_WIDTH"))
 		height, _ := strconv.Atoi(os.Getenv("IMAGE_HEIGHT"))
 		baseInput := AppInput{
@@ -388,7 +397,9 @@ func (s *APIServer) CreatePoll(c echo.Context) error {
 		go func() {
 			_, err := StartPollImageGenerationWorkflow(s.temporalClient, imageGenWorkflowID, workflowInput)
 			if err != nil {
-				c.Logger().Errorf("Failed to start poll image generation workflow: %v", err)
+				log.Printf("Failed to start poll image generation workflow %s: %v", imageGenWorkflowID, err)
+			} else {
+				log.Printf("Successfully started poll image generation workflow %s", imageGenWorkflowID)
 			}
 		}()
 	}
