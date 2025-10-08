@@ -77,17 +77,31 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 		var actErr error
 
 		cfg := OpenAIConfig{
-			APIKey: os.Getenv("RESEARCH_ORCHESTRATOR_LLM_API_KEY"),
-			Model:  os.Getenv("RESEARCH_ORCHESTRATOR_LLM_MODEL"),
+			APIKey:  os.Getenv("RESEARCH_ORCHESTRATOR_LLM_API_KEY"),
+			Model:   os.Getenv("RESEARCH_ORCHESTRATOR_LLM_MODEL"),
+			APIHost: os.Getenv("RESEARCH_ORCHESTRATOR_LLM_BASE_URL"),
 		}
 
 		if previousResponseID == "" {
-			err := workflow.ExecuteActivity(ctx, GenerateResponsesTurnActivity, cfg, previousResponseID, prompt, tools, nil).Get(ctx, &turnResult)
+			input := GenerateResponsesTurnInput{
+				OpenAIConfig:       cfg,
+				PreviousResponseID: previousResponseID,
+				UserInput:          prompt,
+				Tools:              tools,
+			}
+			err := workflow.ExecuteActivity(ctx, GenerateResponsesTurnActivity, input).Get(ctx, &turnResult)
 			if err != nil {
 				actErr = err
 			}
 		} else {
-			err := workflow.ExecuteActivity(ctx, GenerateResponsesTurnActivity, cfg, previousResponseID, "", tools, pendingOutputs).Get(ctx, &turnResult)
+			input := GenerateResponsesTurnInput{
+				OpenAIConfig:       cfg,
+				PreviousResponseID: previousResponseID,
+				UserInput:          "",
+				Tools:              tools,
+				FunctionOutputs:    pendingOutputs,
+			}
+			err := workflow.ExecuteActivity(ctx, GenerateResponsesTurnActivity, input).Get(ctx, &turnResult)
 			if err != nil {
 				actErr = err
 			}

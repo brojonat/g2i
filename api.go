@@ -37,8 +37,14 @@ func requestLogger(next echo.HandlerFunc) echo.HandlerFunc {
 		status := c.Response().Status
 
 		// Log the response
-		if status >= 400 {
-			c.Logger().Errorf("← %s %s - %d (error)", c.Request().Method, c.Request().RequestURI, status)
+		if status >= 500 {
+			logMsg := fmt.Sprintf("← %s %s - %d", c.Request().Method, c.Request().RequestURI, status)
+			if err != nil {
+				logMsg = fmt.Sprintf("%s (error: %v)", logMsg, err)
+			}
+			c.Logger().Error(logMsg)
+		} else if status >= 400 {
+			c.Logger().Infof("← %s %s - %d", c.Request().Method, c.Request().RequestURI, status)
 		} else {
 			c.Logger().Debugf("← %s %s - %d", c.Request().Method, c.Request().RequestURI, status)
 		}
@@ -259,8 +265,17 @@ func (s *APIServer) CreatePoll(c echo.Context) error {
 	}
 
 	// Use the LLM to parse the poll request.
-	parsedRequest, err := ParsePollRequestWithLLM(c.Request().Context(), pollRequest)
+	parsedRequest, err := ParsePollRequestWithLLM(
+		c.Request().Context(),
+		OpenAIConfig{
+			APIKey:  os.Getenv("RESEARCH_ORCHESTRATOR_LLM_API_KEY"),
+			Model:   os.Getenv("RESEARCH_ORCHESTRATOR_LLM_MODEL"),
+			APIHost: os.Getenv("RESEARCH_ORCHESTRATOR_LLM_BASE_URL"),
+		},
+		pollRequest,
+	)
 	if err != nil {
+		c.Logger().Errorf("Failed to parse poll request: %v", err)
 		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": "Failed to parse poll request: " + err.Error()})
 	}
 
@@ -289,9 +304,11 @@ func (s *APIServer) CreatePoll(c echo.Context) error {
 		}
 
 		// For any other error, return a 500.
+		c.Logger().Errorf("Failed to start poll workflow: %v", err)
 		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
 	}
 
+	c.Logger().Infof("Successfully started poll workflow %s", workflowID)
 	// Get a list of all users who already have generated content.
 	existingCreators, err := s.storageProvider.ListTopLevelFolders(c.Request().Context(), os.Getenv("STORAGE_BUCKET"))
 	if err != nil {

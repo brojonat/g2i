@@ -3,14 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"image/png"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -21,6 +18,16 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"google.golang.org/genai"
 )
+
+// GenerateResponsesTurnInput holds the parameters for the GenerateResponsesTurnActivity.
+type GenerateResponsesTurnInput struct {
+	OpenAIConfig       OpenAIConfig
+	PreviousResponseID string
+	UserInput          string
+	Tools              []Tool
+	FunctionOutputs    map[string]string
+	ToolChoice         any
+}
 
 // ExecuteGhCommandActivity is an activity that executes a GitHub CLI command.
 func ExecuteGhCommandActivity(ctx context.Context, command string) (string, error) {
@@ -40,8 +47,8 @@ func ExecuteGhCommandActivity(ctx context.Context, command string) (string, erro
 }
 
 // GenerateResponsesTurnActivity is an activity that generates a turn in the agentic conversation.
-func GenerateResponsesTurnActivity(ctx context.Context, p OpenAIConfig, previousResponseID string, userInput string, tools []Tool, functionOutputs map[string]string) (GenerateResponsesTurnResult, error) {
-	text, calls, id, err := generateResponsesTurn(ctx, p, previousResponseID, userInput, tools, functionOutputs)
+func GenerateResponsesTurnActivity(ctx context.Context, input GenerateResponsesTurnInput) (GenerateResponsesTurnResult, error) {
+	text, calls, id, err := generateResponsesTurn(ctx, input.OpenAIConfig, input.PreviousResponseID, input.UserInput, input.Tools, input.FunctionOutputs, input.ToolChoice)
 	if err != nil {
 		return GenerateResponsesTurnResult{}, err
 	}
@@ -65,155 +72,7 @@ type OpenAIConfig struct {
 	APIKey    string
 	Model     string
 	MaxTokens int
-}
-
-func generateResponsesTurn(ctx context.Context, p OpenAIConfig, previousResponseID string, userInput string, tools []Tool, functionOutputs map[string]string) (string, []ToolCall, string, error) {
-	if p.MaxTokens == 0 {
-		p.MaxTokens = 4096
-	}
-
-	req := map[string]interface{}{
-		"model":             p.Model,
-		"store":             true,
-		"max_output_tokens": p.MaxTokens,
-	}
-
-	if previousResponseID != "" {
-		req["previous_response_id"] = previousResponseID
-		inputs := make([]map[string]interface{}, 0, len(functionOutputs))
-		for callID, output := range functionOutputs {
-			inputs = append(inputs, map[string]interface{}{
-				"type":    "function_call_output",
-				"call_id": callID,
-				"output":  output,
-			})
-		}
-		req["input"] = inputs
-	} else {
-		req["input"] = userInput
-	}
-
-	if len(tools) > 0 {
-		toolList := make([]map[string]interface{}, 0, len(tools))
-		for _, t := range tools {
-			toolList = append(toolList, map[string]interface{}{
-				"type":        "function",
-				"name":        t.Name,
-				"description": t.Description,
-				"parameters":  t.Parameters,
-				"strict":      true,
-			})
-		}
-		req["tools"] = toolList
-	}
-
-	jsonData, err := json.Marshal(req)
-	if err != nil {
-		return "", nil, "", fmt.Errorf("failed to marshal responses request: %w", err)
-	}
-	apiURL := "https://api.openai.com/v1/responses"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", nil, "", fmt.Errorf("failed to create responses request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+p.APIKey)
-
-	client := &http.Client{}
-	httpResp, err := client.Do(httpReq)
-	if err != nil {
-		return "", nil, "", fmt.Errorf("failed to send responses request: %w", err)
-	}
-	defer httpResp.Body.Close()
-	body, _ := io.ReadAll(httpResp.Body)
-	if httpResp.StatusCode != http.StatusOK {
-		return "", nil, "", fmt.Errorf("responses api returned status %d: %s", httpResp.StatusCode, string(body))
-	}
-
-	assistantText, toolCalls, responseID, err := parseResponsesOutput(body)
-	if err != nil {
-		return "", nil, "", err
-	}
-	return assistantText, toolCalls, responseID, nil
-}
-
-func parseResponsesOutput(body []byte) (assistantText string, toolCalls []ToolCall, responseID string, err error) {
-	var root struct {
-		ID     string          `json:"id"`
-		Output json.RawMessage `json:"output"`
-	}
-	if e := json.Unmarshal(body, &root); e != nil {
-		return "", nil, "", fmt.Errorf("failed to decode responses body: %w", e)
-	}
-	responseID = root.ID
-
-	var items []map[string]any
-	if e := json.Unmarshal(root.Output, &items); e != nil {
-		var alt struct {
-			Output []map[string]any `json:"output"`
-		}
-		if e2 := json.Unmarshal(body, &alt); e2 == nil && len(alt.Output) > 0 {
-			items = alt.Output
-		} else {
-			// It might be a single object, not an array
-			var singleItem map[string]any
-			if e3 := json.Unmarshal(root.Output, &singleItem); e3 == nil {
-				items = []map[string]any{singleItem}
-			} else {
-				return "", nil, responseID, fmt.Errorf("unexpected responses output format: %v", e)
-			}
-		}
-	}
-
-	var textBuilder []string
-	var calls []ToolCall
-	for _, it := range items {
-		t, _ := it["type"].(string)
-		switch t {
-		case "message":
-			if content, ok := it["content"].([]any); ok {
-				for _, c := range content {
-					if cm, ok := c.(map[string]any); ok {
-						if cm["type"] == "output_text" {
-							if txt, _ := cm["text"].(string); txt != "" {
-								textBuilder = append(textBuilder, txt)
-							}
-						}
-					}
-				}
-			}
-			if mtc, ok := it["tool_calls"].([]any); ok {
-				for _, raw := range mtc {
-					if m, ok := raw.(map[string]any); ok {
-						id, _ := m["id"].(string)
-						if fn, ok := m["function"].(map[string]any); ok {
-							name, _ := fn["name"].(string)
-							args, _ := fn["arguments"].(string)
-							if id != "" && name != "" {
-								calls = append(calls, ToolCall{ID: id, Name: name, Arguments: args})
-							}
-						}
-					}
-				}
-			}
-		case "function_call":
-			id, _ := it["call_id"].(string)
-			name, _ := it["name"].(string)
-			var argsStr string
-			if s, ok := it["arguments"].(string); ok {
-				argsStr = s
-			} else if obj, ok := it["arguments"].(map[string]any); ok {
-				if b, e := json.Marshal(obj); e == nil {
-					argsStr = string(b)
-				}
-			}
-			if id != "" && name != "" {
-				calls = append(calls, ToolCall{ID: id, Name: name, Arguments: argsStr})
-			}
-		}
-	}
-
-	return strings.TrimSpace(strings.Join(textBuilder, "\n")), calls, responseID, nil
+	APIHost   string
 }
 
 // CopyObjectInput defines the input for the CopyObject activity.

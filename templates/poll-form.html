@@ -37,35 +37,4 @@
     </div>
   </form>
 </div>
-
-<script>
-  // Debug HTMX events
-  document.getElementById("poll-form").addEventListener("htmx:configRequest", function (evt) {
-    console.log("HTMX: Configuring request", evt.detail);
-    alert("Form is about to submit to: " + evt.detail.path);
-  });
-
-  document.getElementById("poll-form").addEventListener("htmx:beforeRequest", function (evt) {
-    console.log("HTMX: Before request", evt.detail);
-    alert("Sending POST request now!");
-  });
-
-  document.getElementById("poll-form").addEventListener("htmx:afterRequest", function (evt) {
-    console.log("HTMX: After request", evt.detail);
-    alert("Request complete! Status: " + evt.detail.xhr.status);
-  });
-
-  // Test if HTMX is loaded
-  if (typeof htmx === "undefined") {
-    alert("ERROR: HTMX is not loaded!");
-  } else {
-    console.log("HTMX is loaded and ready");
-  }
-
-  // Debug regular form submission
-  document.getElementById("poll-form").addEventListener("submit", function (evt) {
-    console.log("Form submit event fired!");
-    alert("Form submitted! Event type: " + evt.type);
-  });
-</script>
 {{end}}
