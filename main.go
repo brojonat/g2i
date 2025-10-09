@@ -39,6 +39,24 @@ func main() {
 			runWorker(ctx, nil)
 		case "server":
 			runServer(ctx, stop, nil)
+		case "terminate":
+			terminateCmd := flag.NewFlagSet("terminate", flag.ExitOnError)
+			workflowID := terminateCmd.String("id", "", "workflow ID to terminate (required)")
+			reason := terminateCmd.String("reason", "Manual termination via CLI", "reason for termination")
+			terminateCmd.Parse(os.Args[2:])
+
+			if *workflowID == "" {
+				stdlog.Fatalf("workflow ID is required. Usage: %s terminate -id <workflow-id> [-reason <reason>]", os.Args[0])
+			}
+
+			c := newTemporalClient()
+			defer c.Close()
+
+			err := TerminateWorkflow(c, *workflowID, *reason)
+			if err != nil {
+				stdlog.Fatalf("Failed to terminate workflow: %v", err)
+			}
+			stdlog.Printf("Successfully terminated workflow: %s", *workflowID)
 		default:
 			stdlog.Fatalf("Unknown command: %s", os.Args[1])
 		}

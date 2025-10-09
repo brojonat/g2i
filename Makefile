@@ -34,6 +34,14 @@ clean: ## Clean build artifacts
 	@echo "🧹 Cleaning up..."
 	@rm -rf $(BIN_DIR) logs
 
+terminate-workflow: build ## Terminate a workflow by ID (usage: make terminate-workflow ID=<workflow-id> [REASON=<reason>])
+	@if [ -z "$(ID)" ]; then \
+		echo "Error: workflow ID is required. Usage: make terminate-workflow ID=<workflow-id> [REASON='reason']"; \
+		exit 1; \
+	fi
+	@$(call setup_env, .env.dev)
+	@$(BIN_PATH) terminate -id "$(ID)" -reason "$(if $(REASON),$(REASON),Manual termination via Makefile)"
+
 # Internal target to run the app; waits for Temporal and uses air for hot-reloading.
 run-app: build
 	@if [ ! -f .env.dev ]; then \
