@@ -57,6 +57,24 @@ func main() {
 				stdlog.Fatalf("Failed to terminate workflow: %v", err)
 			}
 			stdlog.Printf("Successfully terminated workflow: %s", *workflowID)
+		case "setup-bucket":
+			setupBucketCmd := flag.NewFlagSet("setup-bucket", flag.ExitOnError)
+			setupBucketCmd.Parse(os.Args[2:])
+
+			provider := os.Getenv("STORAGE_PROVIDER")
+			bucket := os.Getenv("STORAGE_BUCKET")
+
+			storage := NewObjectStorage(provider)
+			s3Storage, ok := storage.(*S3CompatibleStorage)
+			if !ok {
+				stdlog.Fatalf("setup-bucket only works with S3-compatible storage")
+			}
+
+			err := s3Storage.SetupBucketPublicRead(context.Background(), bucket)
+			if err != nil {
+				stdlog.Fatalf("Failed to setup bucket: %v", err)
+			}
+			stdlog.Printf("Successfully configured bucket '%s' for public read access", bucket)
 		default:
 			stdlog.Fatalf("Unknown command: %s", os.Args[1])
 		}

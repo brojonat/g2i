@@ -190,7 +190,7 @@ S3_REGION=us-east-1
 S3_ACCESS_KEY=minioadmin
 S3_SECRET_KEY=minioadmin
 S3_USE_SSL=false
-STORAGE_BUCKET=github-images
+STORAGE_BUCKET=github-visualizer
 
 # Web server
 PORT=8080
