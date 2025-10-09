@@ -63,14 +63,12 @@ run-app: build
 
 # Tmux Development Session
 # ------------------------
-.PHONY: dev-session start-dev-session stop-dev-session
+.PHONY: start-dev-session stop-dev-session
 
 PORT_FORWARD_WEB_CMD := "kubectl port-forward service/temporal-web 8081:8080"
 PORT_FORWARD_FRONTEND_CMD := "kubectl port-forward service/temporal-frontend 7233:7233"
 
-dev-session: stop-dev-session start-dev-session ## Stop (if running) and start a new tmux dev session
-
-start-dev-session: build ## Start a new tmux development session
+start-dev-session: stop-dev-session build ## Start (or restart) the tmux development session
 	@$(call setup_env, .env.dev)
 	@command -v tmux >/dev/null 2>&1 || { echo >&2 "tmux is not installed. Aborting."; exit 1; }
 	@command -v kubectl >/dev/null 2>&1 || { echo >&2 "kubectl is not installed. Aborting."; exit 1; }
