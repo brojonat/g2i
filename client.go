@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/workflowservice/v1"
@@ -139,6 +140,23 @@ func CancelWorkflow(c client.Client, workflowID string, reason string) error {
 
 	log.Printf("Successfully canceled workflow %s: %s", workflowID, reason)
 	return nil
+}
+
+// UpdatePollWorkflow sends an update to a running poll workflow and returns the result.
+func UpdatePollWorkflow[R any](c client.Client, workflowID string, updateName string, updateArg interface{}) (R, error) {
+	var result R
+	// Note: using a long poll context here to ensure we wait for the result.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	updateHandle, err := c.UpdateWorkflow(ctx, workflowID, "", updateName, updateArg)
+	if err != nil {
+		return result, fmt.Errorf("failed to send update to workflow: %w", err)
+	}
+	err = updateHandle.Get(ctx, &result)
+	if err != nil {
+		return result, fmt.Errorf("failed to get update result: %w", err)
+	}
+	return result, nil
 }
 
 // TerminateWorkflow terminates a workflow execution. This allows the workflow ID to be reused.

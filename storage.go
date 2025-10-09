@@ -22,6 +22,7 @@ type ObjectStorage interface {
 	Delete(ctx context.Context, bucket, prefix string) error
 	GetURL(bucket, key string) string
 	GetPresignedURL(ctx context.Context, bucket, key string, expires time.Duration) (string, error)
+	Stat(ctx context.Context, bucket, key string) (string, error)
 }
 
 const (
@@ -104,6 +105,25 @@ func (s *S3CompatibleStorage) Store(ctx context.Context, data []byte, bucket, ke
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to upload to S3-compatible storage: %w", err)
+	}
+
+	return s.GetURL(bucket, key), nil
+}
+
+// Stat checks if an object exists and returns its public URL if it does.
+func (s *S3CompatibleStorage) Stat(ctx context.Context, bucket, key string) (string, error) {
+	client, err := minio.New(s.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(s.AccessKey, s.SecretKey, ""),
+		Secure: s.UseSSL,
+		Region: s.Region,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create S3-compatible client: %w", err)
+	}
+
+	_, err = client.StatObject(ctx, bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("object %s not found in bucket %s: %w", key, bucket, err)
 	}
 
 	return s.GetURL(bucket, key), nil
@@ -419,6 +439,12 @@ func (s *S3Storage) GetPresignedURL(ctx context.Context, bucket, key string, exp
 	return s.GetURL(bucket, key), nil
 }
 
+// Stat for S3 (mock implementation)
+func (s *S3Storage) Stat(ctx context.Context, bucket, key string) (string, error) {
+	// Mock implementation for AWS S3
+	return s.GetURL(bucket, key), nil
+}
+
 // GCSStorage implements ObjectStorage using Google Cloud Storage
 type GCSStorage struct {
 	ProjectID       string
@@ -479,6 +505,12 @@ func (g *GCSStorage) GetURL(bucket, key string) string {
 // GetPresignedURL for GCS (mock implementation)
 func (g *GCSStorage) GetPresignedURL(ctx context.Context, bucket, key string, expires time.Duration) (string, error) {
 	// Mock implementation - in real GCS, you'd use cloud.google.com/go/storage to generate signed URLs
+	return g.GetURL(bucket, key), nil
+}
+
+// Stat for GCS (mock implementation)
+func (g *GCSStorage) Stat(ctx context.Context, bucket, key string) (string, error) {
+	// Mock implementation for GCS
 	return g.GetURL(bucket, key), nil
 }
 

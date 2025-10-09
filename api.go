@@ -114,6 +114,9 @@ func createMyRender() *TemplateRenderer {
 	r.templates["poll-details"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/poll-details.html", "templates/poll-results-partial.html"))
 	r.templates["poll-results-partial"] = template.Must(template.ParseFS(templateFS, "templates/poll-results-partial.html"))
 	r.templates["generate-form"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/generate-form.html"))
+	r.templates["spinner-partial"] = template.Must(template.ParseFS(templateFS, "templates/spinner-partial.html"))
+	r.templates["image-partial"] = template.Must(template.ParseFS(templateFS, "templates/image-partial.html"))
+	r.templates["votes-partial"] = template.Must(template.ParseFS(templateFS, "templates/votes-partial.html"))
 
 	return r
 }
@@ -233,6 +236,8 @@ func (s *APIServer) SetupRoutes() *echo.Echo {
 	e.GET("/poll/:id/results", s.GetPollResults)
 	e.POST("/poll/:id/vote", s.VoteOnPoll)
 	e.DELETE("/poll/:id", s.DeletePoll)
+	e.GET("/poll/:id/profile/:option", s.GetPollProfile)
+	e.GET("/poll/:id/votes/:option", s.GetPollVotes)
 
 	// Visualization routes
 	e.GET("/visualization-form", s.GetVisualizationForm)
@@ -412,13 +417,6 @@ func (s *APIServer) CreatePoll(c echo.Context) error {
 func (s *APIServer) GetPollDetails(c echo.Context) error {
 	workflowID := c.Param("id")
 
-	// Query the workflow to get its state
-	// Note: We need to implement QueryPollWorkflow in client.go
-	state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
-	if err != nil {
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
-
 	config, err := QueryPollWorkflow[PollConfig](s.temporalClient, workflowID, "get_config")
 	if err != nil {
 		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
@@ -430,34 +428,11 @@ func (s *APIServer) GetPollDetails(c echo.Context) error {
 	}
 
 	// Fetch image URLs for each poll option.
-	imageURLs := make(map[string]string)
-	bucket := os.Getenv("STORAGE_BUCKET")
-
-	// List all objects in the poll's "folder".
-	pollObjectKeys, err := s.storageProvider.List(c.Request().Context(), bucket, workflowID+"/")
-	if err != nil {
-		// Log the error but don't fail the request. The UI can handle missing images.
-		c.Logger().Errorf("Failed to list images for poll %s: %v", workflowID, err)
-	} else {
-		for _, key := range pollObjectKeys {
-			// The object key is something like "poll-workflow-id/username.png".
-			// We extract the username to map it to the image URL.
-			parts := strings.Split(key, "/")
-			if len(parts) > 1 {
-				filename := parts[len(parts)-1]
-				username := strings.Split(filename, ".")[0]
-				imageURLs[username] = s.storageProvider.GetURL(bucket, key)
-			}
-		}
-	}
-
 	return c.Render(http.StatusOK, "poll-details", echo.Map{
 		"Title":      "Poll Details",
 		"WorkflowID": workflowID,
-		"State":      state,
 		"Config":     config,
 		"Options":    options,
-		"ImageURLs":  imageURLs,
 	})
 }
 
@@ -465,49 +440,68 @@ func (s *APIServer) GetPollDetails(c echo.Context) error {
 func (s *APIServer) GetPollResults(c echo.Context) error {
 	workflowID := c.Param("id")
 
-	state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
-	if err != nil {
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
-
-	config, err := QueryPollWorkflow[PollConfig](s.temporalClient, workflowID, "get_config")
-	if err != nil {
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
 	options, err := QueryPollWorkflow[[]string](s.temporalClient, workflowID, "get_options")
 	if err != nil {
 		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
 	}
 
-	// Fetch image URLs for each poll option.
-	imageURLs := make(map[string]string)
-	bucket := os.Getenv("STORAGE_BUCKET")
-
-	// List all objects in the poll's "folder".
-	pollObjectKeys, err := s.storageProvider.List(c.Request().Context(), bucket, workflowID+"/")
-	if err != nil {
-		// Log the error but don't fail the request. The UI can handle missing images.
-		c.Logger().Errorf("Failed to list images for poll %s: %v", workflowID, err)
-	} else {
-		for _, key := range pollObjectKeys {
-			// The object key is something like "poll-workflow-id/username.png".
-			// We extract the username to map it to the image URL.
-			parts := strings.Split(key, "/")
-			if len(parts) > 1 {
-				filename := parts[len(parts)-1]
-				username := strings.Split(filename, ".")[0]
-				imageURLs[username] = s.storageProvider.GetURL(bucket, key)
-			}
-		}
-	}
-
 	// HTMX requests expect a partial, so we render the results template directly.
 	return c.Render(http.StatusOK, "poll-results-partial", echo.Map{
 		"WorkflowID": workflowID,
-		"State":      state,
-		"Config":     config,
 		"Options":    options,
-		"ImageURLs":  imageURLs,
+	})
+}
+
+// GetPollProfile handles serving the image or spinner for a poll option.
+func (s *APIServer) GetPollProfile(c echo.Context) error {
+	workflowID := c.Param("id")
+	option := c.Param("option")
+	bucket := os.Getenv("STORAGE_BUCKET")
+	imageFormat := os.Getenv("IMAGE_FORMAT")
+
+	// Construct the expected object key for the poll option's image.
+	key := fmt.Sprintf("%s/%s.%s", workflowID, option, imageFormat)
+
+	// Check if the image exists in storage.
+	imageURL, err := s.storageProvider.Stat(c.Request().Context(), bucket, key)
+	if err != nil {
+		// If the image doesn't exist, return the spinner partial, which will
+		// continue to poll.
+		return c.Render(http.StatusOK, "spinner-partial", echo.Map{
+			"WorkflowID": workflowID,
+			"Option":     option,
+		})
+	}
+
+	// If the image exists, return the image partial, which does NOT have
+	// htmx polling attributes, so polling for this image will stop.
+	return c.Render(http.StatusOK, "image-partial", echo.Map{
+		"ImageURL":   imageURL,
+		"Option":     option,
+		"WorkflowID": workflowID,
+	})
+}
+
+// GetPollVotes handles serving the vote count for a poll option.
+func (s *APIServer) GetPollVotes(c echo.Context) error {
+	workflowID := c.Param("id")
+	option := c.Param("option")
+
+	state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
+	if err != nil {
+		// It's possible the workflow is still starting up, so don't treat this
+		// as a hard error. Return a temporary state.
+		return c.Render(http.StatusOK, "votes-partial", echo.Map{
+			"WorkflowID": workflowID,
+			"Option":     option,
+			"Votes":      0,
+		})
+	}
+
+	return c.Render(http.StatusOK, "votes-partial", echo.Map{
+		"WorkflowID": workflowID,
+		"Option":     option,
+		"Votes":      state.Options[option],
 	})
 }
 
@@ -533,20 +527,22 @@ func (s *APIServer) VoteOnPoll(c echo.Context) error {
 		voterID = voterCookie.Value
 	}
 
-	signal := VoteSignal{
+	update := VoteUpdate{
 		UserID: voterID,
 		Option: c.FormValue("option"),
 		Amount: 1, // Each vote counts as 1
 	}
 
-	// Note: We need to implement SignalPollWorkflow in client.go
-	err = SignalPollWorkflow(s.temporalClient, workflowID, "vote", signal)
+	result, err := UpdatePollWorkflow[VoteUpdateResult](s.temporalClient, workflowID, "vote", update)
 	if err != nil {
 		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
 	}
 
-	// After sending the signal, we return the updated results partial.
-	return s.GetPollResults(c)
+	return c.Render(http.StatusOK, "votes-partial", echo.Map{
+		"WorkflowID": workflowID,
+		"Option":     update.Option,
+		"Votes":      result.TotalVotes,
+	})
 }
 
 // DeletePoll deletes all poll-related objects from storage and terminates associated workflows.

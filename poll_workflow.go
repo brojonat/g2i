@@ -24,20 +24,9 @@ type PollState struct {
 	Voters  map[string]struct{}
 }
 
-// PollSummary contains the final results of a poll.
-type PollSummary struct {
-	Question string
-	Options  map[string]int
-	Voters   map[string]struct{}
-}
+// PollSummary is now defined in types.go
 
 // --- Signal Structs ---
-
-type VoteSignal struct {
-	UserID string
-	Option string
-	Amount int
-}
 
 type AddVoterSignal struct{ UserID string }
 type RemoveVoterSignal struct{ UserID string }
@@ -116,6 +105,28 @@ func PollWorkflow(ctx workflow.Context, config PollConfig) (PollSummary, error) 
 		return PollSummary{}, fmt.Errorf("failed to set get_options query handler: %w", err)
 	}
 
+	err = workflow.SetUpdateHandler(ctx, "vote", func(ctx workflow.Context, update VoteUpdate) (VoteUpdateResult, error) {
+		if allowedVoters != nil {
+			if _, ok := allowedVoters[update.UserID]; !ok {
+				return VoteUpdateResult{}, fmt.Errorf("vote rejected for non-allowed voter: %s", update.UserID)
+			}
+		}
+		if allowedOptions != nil {
+			if _, ok := allowedOptions[update.Option]; !ok {
+				return VoteUpdateResult{}, fmt.Errorf("vote rejected for non-allowed option: %s", update.Option)
+			}
+		}
+		if _, ok := state.Voters[update.UserID]; ok && config.SingleVote {
+			return VoteUpdateResult{}, fmt.Errorf("vote rejected for duplicate voter: %s", update.UserID)
+		}
+		state.Options[update.Option] += update.Amount
+		state.Voters[update.UserID] = struct{}{}
+		return VoteUpdateResult{TotalVotes: state.Options[update.Option]}, nil
+	})
+	if err != nil {
+		return PollSummary{}, fmt.Errorf("failed to set vote update handler: %w", err)
+	}
+
 	// --- Main Workflow Logic ---
 	if config.StartBlocked {
 		logger.Info("Poll is blocked, waiting for start signal.")
@@ -147,29 +158,6 @@ func PollWorkflow(ctx workflow.Context, config PollConfig) (PollSummary, error) 
 		})
 
 		// (rest of the signal handlers)
-		selector.AddReceive(workflow.GetSignalChannel(ctx, "vote"), func(c workflow.ReceiveChannel, more bool) {
-			var signal VoteSignal
-			c.Receive(ctx, &signal)
-			if allowedVoters != nil {
-				if _, ok := allowedVoters[signal.UserID]; !ok {
-					logger.Warn("Vote rejected for non-allowed voter", "UserID", signal.UserID)
-					return
-				}
-			}
-			if allowedOptions != nil {
-				if _, ok := allowedOptions[signal.Option]; !ok {
-					logger.Warn("Vote rejected for non-allowed option", "Option", signal.Option)
-					return
-				}
-			}
-			if _, ok := state.Voters[signal.UserID]; ok && config.SingleVote {
-				logger.Warn("Vote rejected for duplicate voter", "UserID", signal.UserID)
-				return
-			}
-			state.Options[signal.Option] += signal.Amount
-			state.Voters[signal.UserID] = struct{}{}
-		})
-
 		selector.AddReceive(workflow.GetSignalChannel(ctx, "add_voter"), func(c workflow.ReceiveChannel, more bool) {
 			var signal AddVoterSignal
 			c.Receive(ctx, &signal)

@@ -282,5 +282,10 @@ func ParsePollRequestWithLLM(ctx context.Context, p OpenAIConfig, pollRequest st
 		return ParsedPollRequest{}, fmt.Errorf("failed to unmarshal LLM response: %w", err)
 	}
 
+	// After parsing, remove the "@" prefix from all usernames.
+	for i, username := range parsedRequest.Usernames {
+		parsedRequest.Usernames[i] = strings.TrimPrefix(username, "@")
+	}
+
 	return parsedRequest, nil
 }
