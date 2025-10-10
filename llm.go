@@ -287,5 +287,7 @@ func ParsePollRequestWithLLM(ctx context.Context, p OpenAIConfig, pollRequest st
 		parsedRequest.Usernames[i] = strings.TrimPrefix(username, "@")
 	}
 
+	// Limit to 5 users per poll; we can change later, this is just to enable deployment
+	parsedRequest.Usernames = parsedRequest.Usernames[:5]
 	return parsedRequest, nil
 }
