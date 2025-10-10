@@ -1,0 +1,12 @@
+{{define "image-partial"}}
+<img
+  src="{{ .ImageURL }}"
+  alt="{{ .Option }}"
+  class="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity"
+  onerror="this.parentElement.innerHTML='<div class=\'w-full h-48 bg-gray-800 flex items-center justify-center\'><span class=\'text-gray-500\'>Image failed to load</span></div>'"
+  hx-post="/poll/{{ .WorkflowID }}/vote"
+  hx-target="#poll-votes-{{ .WorkflowID }}-{{ .Option }}"
+  hx-swap="innerHTML"
+  hx-vals='{"option": "{{ .Option }}"}'
+/>
+{{end}}

@@ -34,6 +34,14 @@ clean: ## Clean build artifacts
 	@echo "🧹 Cleaning up..."
 	@rm -rf $(BIN_DIR) logs
 
+terminate-workflow: build ## Terminate a workflow by ID (usage: make terminate-workflow ID=<workflow-id> [REASON=<reason>])
+	@if [ -z "$(ID)" ]; then \
+		echo "Error: workflow ID is required. Usage: make terminate-workflow ID=<workflow-id> [REASON='reason']"; \
+		exit 1; \
+	fi
+	@$(call setup_env, .env.dev)
+	@$(BIN_PATH) terminate -id "$(ID)" -reason "$(if $(REASON),$(REASON),Manual termination via Makefile)"
+
 # Internal target to run the app; waits for Temporal and uses air for hot-reloading.
 run-app: build
 	@if [ ! -f .env.dev ]; then \
@@ -44,7 +52,7 @@ run-app: build
 	@# Remove old prompt variables to prevent duplication
 	@grep -vE '_SYSTEM_PROMPT=' .env.dev > .env.tmp && mv .env.tmp .env.dev
 	@$(MAKE) --no-print-directory generate-prompts >> .env.dev
-	@$(call setup_env, .env)
+	@$(call setup_env, .env.dev)
 	@echo "⏳ Waiting for Temporal frontend (port 7233) to be ready...";
 	@while ! nc -z 127.0.0.1 7233; do \
 	  sleep 0.5; \
@@ -55,14 +63,12 @@ run-app: build
 
 # Tmux Development Session
 # ------------------------
-.PHONY: dev-session start-dev-session stop-dev-session
+.PHONY: start-dev-session stop-dev-session
 
 PORT_FORWARD_WEB_CMD := "kubectl port-forward service/temporal-web 8081:8080"
 PORT_FORWARD_FRONTEND_CMD := "kubectl port-forward service/temporal-frontend 7233:7233"
 
-dev-session: stop-dev-session start-dev-session ## Stop (if running) and start a new tmux dev session
-
-start-dev-session: build ## Start a new tmux development session
+start-dev-session: stop-dev-session build ## Start (or restart) the tmux development session
 	@$(call setup_env, .env.dev)
 	@command -v tmux >/dev/null 2>&1 || { echo >&2 "tmux is not installed. Aborting."; exit 1; }
 	@command -v kubectl >/dev/null 2>&1 || { echo >&2 "kubectl is not installed. Aborting."; exit 1; }

@@ -1,6 +1,12 @@
 {{define "content"}}
 <div class="bg-light p-4 rounded border shadow-sm">
-  <form hx-post="/poll" hx-target="body" hx-push-url="true">
+  <form
+    id="poll-form"
+    hx-post="/poll"
+    hx-target="body"
+    hx-push-url="true"
+    hx-indicator="#loading"
+  >
     <div class="mb-4">
       <label for="poll_request" class="block text-lg font-medium"
         >Poll Request</label
@@ -17,10 +23,17 @@
     <div class="mt-8">
       <button
         type="submit"
+        id="submit-btn"
         class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-lg font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
       >
         Create Poll
       </button>
+      <div
+        id="loading"
+        class="htmx-indicator mt-4 text-center text-blue-600 font-semibold"
+      >
+        Submitting...
+      </div>
     </div>
   </form>
 </div>

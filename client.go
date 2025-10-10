@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/workflowservice/v1"
@@ -79,8 +80,9 @@ func StartPollWorkflow(c client.Client, workflowID string, config PollConfig) (c
 // StartPollImageGenerationWorkflow starts the poll image generation workflow.
 func StartPollImageGenerationWorkflow(c client.Client, workflowID string, input PollImageGenerationInput) (client.WorkflowRun, error) {
 	options := client.StartWorkflowOptions{
-		ID:        workflowID,
-		TaskQueue: os.Getenv("TEMPORAL_TASK_QUEUE"),
+		ID:                    workflowID,
+		TaskQueue:             os.Getenv("TEMPORAL_TASK_QUEUE"),
+		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 	}
 
 	we, err := c.ExecuteWorkflow(context.Background(), options, GeneratePollImagesWorkflow, input)
@@ -111,6 +113,77 @@ func SignalPollWorkflow(c client.Client, workflowID string, signalName string, s
 	if err != nil {
 		return fmt.Errorf("failed to send signal '%s' to workflow: %w", signalName, err)
 	}
+	return nil
+}
+
+// CancelWorkflow cancels a running workflow. Returns nil if the workflow doesn't exist or is already completed/canceled.
+func CancelWorkflow(c client.Client, workflowID string, reason string) error {
+	// First check if the workflow exists and is still running
+	desc, err := c.DescribeWorkflowExecution(context.Background(), workflowID, "")
+	if err != nil {
+		// If workflow doesn't exist, consider it already canceled
+		log.Printf("Workflow %s does not exist or cannot be described: %v", workflowID, err)
+		return nil
+	}
+
+	// Check if workflow is already closed (completed, failed, canceled, terminated)
+	if desc.WorkflowExecutionInfo.Status != enums.WORKFLOW_EXECUTION_STATUS_RUNNING {
+		log.Printf("Workflow %s is not running (status: %s), skipping cancellation", workflowID, desc.WorkflowExecutionInfo.Status)
+		return nil
+	}
+
+	// Cancel the workflow
+	err = c.CancelWorkflow(context.Background(), workflowID, "")
+	if err != nil {
+		return fmt.Errorf("failed to cancel workflow: %w", err)
+	}
+
+	log.Printf("Successfully canceled workflow %s: %s", workflowID, reason)
+	return nil
+}
+
+// UpdatePollWorkflow sends an update to a running poll workflow and returns the result.
+func UpdatePollWorkflow[R any](c client.Client, workflowID string, updateName string, updateArg interface{}) (R, error) {
+	var result R
+	// Note: using a long poll context here to ensure we wait for the result.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	updateHandle, err := c.UpdateWorkflow(ctx, workflowID, "", updateName, updateArg)
+	if err != nil {
+		return result, fmt.Errorf("failed to send update to workflow: %w", err)
+	}
+	err = updateHandle.Get(ctx, &result)
+	if err != nil {
+		return result, fmt.Errorf("failed to get update result: %w", err)
+	}
+	return result, nil
+}
+
+// TerminateWorkflow terminates a workflow execution. This allows the workflow ID to be reused.
+// Returns nil if the workflow doesn't exist or is already in a closed state (completed, failed, canceled, terminated).
+func TerminateWorkflow(c client.Client, workflowID string, reason string) error {
+	// First check if the workflow exists
+	desc, err := c.DescribeWorkflowExecution(context.Background(), workflowID, "")
+	if err != nil {
+		// If workflow doesn't exist, nothing to terminate
+		log.Printf("Workflow %s does not exist or cannot be described: %v", workflowID, err)
+		return nil
+	}
+
+	// Check if workflow is already in a closed state (completed, failed, canceled, terminated, timed out, continued-as-new)
+	status := desc.WorkflowExecutionInfo.Status
+	if status != enums.WORKFLOW_EXECUTION_STATUS_RUNNING {
+		log.Printf("Workflow %s is already closed (status: %s), skipping termination", workflowID, status)
+		return nil
+	}
+
+	// Terminate the workflow
+	err = c.TerminateWorkflow(context.Background(), workflowID, "", reason)
+	if err != nil {
+		return fmt.Errorf("failed to terminate workflow: %w", err)
+	}
+
+	log.Printf("Successfully terminated workflow %s: %s", workflowID, reason)
 	return nil
 }
 

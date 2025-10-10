@@ -19,14 +19,14 @@ This is a Temporal-based service that:
 ### Key Makefile Commands
 
 ```bash
-make help              # Show all available commands with descriptions
-make build             # Build the application binary (./bin/app)
-make test              # Run all Go tests
-make clean             # Clean build artifacts and logs directory
+make help                # Show all available commands with descriptions
+make build               # Build the application binary (./bin/app)
+make test                # Run all Go tests
+make clean               # Clean build artifacts and logs directory
 
 # Development Session (recommended)
-make dev-session       # Stop any running session and start a new tmux development session
-make stop-dev-session  # Stop the tmux session and cleanup
+make start-dev-session   # Start (or restart) the tmux development session
+make stop-dev-session    # Stop the tmux session and cleanup
 
 # Deployment (production)
 make deploy-server     # Build, push, and deploy server to Kubernetes
@@ -38,11 +38,11 @@ make logs-worker       # Tail worker logs in Kubernetes
 
 ## Development Workflow with Tmux
 
-The primary way to run and debug this application is through the `make dev-session` command, which sets up a complete tmux session.
+The primary way to run and debug this application is through the `make start-dev-session` command, which sets up a complete tmux session.
 
 ### Tmux Session Structure
 
-When you run `make dev-session`, it creates a tmux session named `github-poll-dev` with the following layout:
+When you run `make start-dev-session`, it creates a tmux session named `github-poll-dev` with the following layout:
 
 1. **Window 1: "App"** (split into 2 panes)
    - **Left pane**: Runs the application with hot-reloading via `air`
@@ -160,8 +160,7 @@ When debugging workflows or investigating issues:
 4. **Restart the application:**
    ```bash
    # From outside tmux
-   make stop-dev-session
-   make dev-session
+   make start-dev-session
 
    # From inside tmux (in the right pane)
    # Kill the left pane process with Ctrl+C (in the left pane)
@@ -172,7 +171,7 @@ When debugging workflows or investigating issues:
 
 The project uses environment files for configuration:
 
-- **`.env.dev`**: Development environment (used by `make dev-session`)
+- **`.env.dev`**: Development environment (used by `make start-dev-session`)
 - **`.env.prod`**: Production environment (used for Kubernetes deployments)
 - **`env.example`**: Template for environment variables
 
@@ -191,7 +190,7 @@ S3_REGION=us-east-1
 S3_ACCESS_KEY=minioadmin
 S3_SECRET_KEY=minioadmin
 S3_USE_SSL=false
-STORAGE_BUCKET=github-images
+STORAGE_BUCKET=github-visualizer
 
 # Web server
 PORT=8080
@@ -238,7 +237,7 @@ This is handled automatically by:
 
 ```bash
 # One command to set everything up
-make dev-session
+make start-dev-session
 ```
 
 This will:
@@ -267,7 +266,7 @@ open http://localhost:8080  # or visit in browser
 ### Stopping Development
 
 ```bash
-# Stop everything cleanly
+# Stop everything cleanly (or just use make start-dev-session to restart)
 make stop-dev-session
 ```
 
@@ -452,7 +451,7 @@ gh pr create --title "Add my feature" --body "## Summary
 - Updated Z
 
 ## Testing
-Tested with \`make dev-session\` and verified in \`logs/app.log\`"
+Tested with \`make start-dev-session\` and verified in \`logs/app.log\`"
 ```
 
 ### Git Best Practices
@@ -508,11 +507,11 @@ tmux attach-session -t github-poll-dev
 
 1. Check that `air` is running in the left pane
 2. Verify `.air.toml` configuration
-3. Restart the dev session: `make stop-dev-session && make dev-session`
+3. Restart the dev session: `make start-dev-session`
 
 ### Logs are missing
 
-The `logs/` directory is created by `make dev-session`. If it doesn't exist:
+The `logs/` directory is created by `make start-dev-session`. If it doesn't exist:
 ```bash
 mkdir -p logs
 ```

@@ -19,7 +19,10 @@ type ObjectStorage interface {
 	ListTopLevelFolders(ctx context.Context, bucket string) ([]string, error)
 	GetLatestObjectKeyForUser(ctx context.Context, bucket, username string) (string, error)
 	Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error
+	Delete(ctx context.Context, bucket, prefix string) error
 	GetURL(bucket, key string) string
+	GetPresignedURL(ctx context.Context, bucket, key string, expires time.Duration) (string, error)
+	Stat(ctx context.Context, bucket, key string) (string, error)
 }
 
 const (
@@ -77,6 +80,23 @@ func (s *S3CompatibleStorage) Store(ctx context.Context, data []byte, bucket, ke
 		if err != nil {
 			return "", fmt.Errorf("failed to create bucket: %w", err)
 		}
+
+		// Set bucket policy to allow public read access
+		policy := fmt.Sprintf(`{
+			"Version": "2012-10-17",
+			"Statement": [
+				{
+					"Effect": "Allow",
+					"Principal": {"AWS": ["*"]},
+					"Action": ["s3:GetObject"],
+					"Resource": ["arn:aws:s3:::%s/*"]
+				}
+			]
+		}`, bucket)
+		err = client.SetBucketPolicy(ctx, bucket, policy)
+		if err != nil {
+			return "", fmt.Errorf("failed to set bucket policy: %w", err)
+		}
 	}
 
 	// Upload content to S3-compatible storage
@@ -85,6 +105,25 @@ func (s *S3CompatibleStorage) Store(ctx context.Context, data []byte, bucket, ke
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to upload to S3-compatible storage: %w", err)
+	}
+
+	return s.GetURL(bucket, key), nil
+}
+
+// Stat checks if an object exists and returns its public URL if it does.
+func (s *S3CompatibleStorage) Stat(ctx context.Context, bucket, key string) (string, error) {
+	client, err := minio.New(s.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(s.AccessKey, s.SecretKey, ""),
+		Secure: s.UseSSL,
+		Region: s.Region,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create S3-compatible client: %w", err)
+	}
+
+	_, err = client.StatObject(ctx, bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("object %s not found in bucket %s: %w", key, bucket, err)
 	}
 
 	return s.GetURL(bucket, key), nil
@@ -228,6 +267,47 @@ func (s *S3CompatibleStorage) Copy(ctx context.Context, srcBucket, srcKey, dstBu
 	return nil
 }
 
+// Delete removes all objects with a given prefix from a bucket.
+func (s *S3CompatibleStorage) Delete(ctx context.Context, bucket, prefix string) error {
+	client, err := minio.New(s.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(s.AccessKey, s.SecretKey, ""),
+		Secure: s.UseSSL,
+		Region: s.Region,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create S3-compatible client: %w", err)
+	}
+
+	// List all objects with the prefix
+	objectCh := client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	})
+
+	// Create a channel for objects to delete
+	objectsCh := make(chan minio.ObjectInfo)
+
+	go func() {
+		defer close(objectsCh)
+		for object := range objectCh {
+			if object.Err != nil {
+				continue
+			}
+			objectsCh <- object
+		}
+	}()
+
+	// Remove objects
+	errorCh := client.RemoveObjects(ctx, bucket, objectsCh, minio.RemoveObjectsOptions{})
+	for err := range errorCh {
+		if err.Err != nil {
+			return fmt.Errorf("failed to delete object %s: %w", err.ObjectName, err.Err)
+		}
+	}
+
+	return nil
+}
+
 // GetURL returns the PUBLIC URL for a stored object
 func (s *S3CompatibleStorage) GetURL(bucket, key string) string {
 	protocol := "http"
@@ -242,6 +322,56 @@ func (s *S3CompatibleStorage) GetURL(bucket, key string) string {
 	}
 	publicURL += bucket + "/" + key
 	return publicURL
+}
+
+// GetPresignedURL generates a presigned URL for accessing an object
+func (s *S3CompatibleStorage) GetPresignedURL(ctx context.Context, bucket, key string, expires time.Duration) (string, error) {
+	client, err := minio.New(s.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(s.AccessKey, s.SecretKey, ""),
+		Secure: s.UseSSL,
+		Region: s.Region,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create S3-compatible client: %w", err)
+	}
+
+	presignedURL, err := client.PresignedGetObject(ctx, bucket, key, expires, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
+	}
+
+	return presignedURL.String(), nil
+}
+
+// SetupBucketPublicRead sets the bucket policy to allow public read access
+func (s *S3CompatibleStorage) SetupBucketPublicRead(ctx context.Context, bucket string) error {
+	client, err := minio.New(s.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(s.AccessKey, s.SecretKey, ""),
+		Secure: s.UseSSL,
+		Region: s.Region,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create S3-compatible client: %w", err)
+	}
+
+	policy := fmt.Sprintf(`{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": {"AWS": ["*"]},
+				"Action": ["s3:GetObject"],
+				"Resource": ["arn:aws:s3:::%s/*"]
+			}
+		]
+	}`, bucket)
+
+	err = client.SetBucketPolicy(ctx, bucket, policy)
+	if err != nil {
+		return fmt.Errorf("failed to set bucket policy: %w", err)
+	}
+
+	return nil
 }
 
 // S3Storage implements ObjectStorage using AWS S3
@@ -293,9 +423,26 @@ func (s *S3Storage) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dstK
 	return nil
 }
 
+// Delete for S3 (mock implementation)
+func (s *S3Storage) Delete(ctx context.Context, bucket, prefix string) error {
+	return nil
+}
+
 // GetURL returns the URL for a stored object
 func (s *S3Storage) GetURL(bucket, key string) string {
 	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucket, s.Region, key)
+}
+
+// GetPresignedURL for S3 (mock implementation)
+func (s *S3Storage) GetPresignedURL(ctx context.Context, bucket, key string, expires time.Duration) (string, error) {
+	// Mock implementation - in real AWS S3, you'd use aws-sdk-go v2 to generate presigned URLs
+	return s.GetURL(bucket, key), nil
+}
+
+// Stat for S3 (mock implementation)
+func (s *S3Storage) Stat(ctx context.Context, bucket, key string) (string, error) {
+	// Mock implementation for AWS S3
+	return s.GetURL(bucket, key), nil
 }
 
 // GCSStorage implements ObjectStorage using Google Cloud Storage
@@ -345,9 +492,26 @@ func (g *GCSStorage) Copy(ctx context.Context, srcBucket, srcKey, dstBucket, dst
 	return nil
 }
 
+// Delete for GCS (mock implementation)
+func (g *GCSStorage) Delete(ctx context.Context, bucket, prefix string) error {
+	return nil
+}
+
 // GetURL returns the URL for a stored object
 func (g *GCSStorage) GetURL(bucket, key string) string {
 	return fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucket, key)
+}
+
+// GetPresignedURL for GCS (mock implementation)
+func (g *GCSStorage) GetPresignedURL(ctx context.Context, bucket, key string, expires time.Duration) (string, error) {
+	// Mock implementation - in real GCS, you'd use cloud.google.com/go/storage to generate signed URLs
+	return g.GetURL(bucket, key), nil
+}
+
+// Stat for GCS (mock implementation)
+func (g *GCSStorage) Stat(ctx context.Context, bucket, key string) (string, error) {
+	// Mock implementation for GCS
+	return g.GetURL(bucket, key), nil
 }
 
 // NewObjectStorage creates a new ObjectStorage instance based on the provider

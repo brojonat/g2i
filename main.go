@@ -39,6 +39,42 @@ func main() {
 			runWorker(ctx, nil)
 		case "server":
 			runServer(ctx, stop, nil)
+		case "terminate":
+			terminateCmd := flag.NewFlagSet("terminate", flag.ExitOnError)
+			workflowID := terminateCmd.String("id", "", "workflow ID to terminate (required)")
+			reason := terminateCmd.String("reason", "Manual termination via CLI", "reason for termination")
+			terminateCmd.Parse(os.Args[2:])
+
+			if *workflowID == "" {
+				stdlog.Fatalf("workflow ID is required. Usage: %s terminate -id <workflow-id> [-reason <reason>]", os.Args[0])
+			}
+
+			c := newTemporalClient()
+			defer c.Close()
+
+			err := TerminateWorkflow(c, *workflowID, *reason)
+			if err != nil {
+				stdlog.Fatalf("Failed to terminate workflow: %v", err)
+			}
+			stdlog.Printf("Successfully terminated workflow: %s", *workflowID)
+		case "setup-bucket":
+			setupBucketCmd := flag.NewFlagSet("setup-bucket", flag.ExitOnError)
+			setupBucketCmd.Parse(os.Args[2:])
+
+			provider := os.Getenv("STORAGE_PROVIDER")
+			bucket := os.Getenv("STORAGE_BUCKET")
+
+			storage := NewObjectStorage(provider)
+			s3Storage, ok := storage.(*S3CompatibleStorage)
+			if !ok {
+				stdlog.Fatalf("setup-bucket only works with S3-compatible storage")
+			}
+
+			err := s3Storage.SetupBucketPublicRead(context.Background(), bucket)
+			if err != nil {
+				stdlog.Fatalf("Failed to setup bucket: %v", err)
+			}
+			stdlog.Printf("Successfully configured bucket '%s' for public read access", bucket)
 		default:
 			stdlog.Fatalf("Unknown command: %s", os.Args[1])
 		}

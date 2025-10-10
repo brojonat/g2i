@@ -122,3 +122,26 @@ type PollImageGenerationInput struct {
 	PollID    string
 	AppInput  AppInput
 }
+
+type PollSummary struct {
+	Question string
+	Options  map[string]int
+	Voters   map[string]struct{}
+}
+
+// VoteUpdate is the struct for the vote update.
+type VoteUpdate struct {
+	UserID string
+	Option string
+	Amount int
+}
+
+// VoteUpdateResult is the result of a vote update.
+type VoteUpdateResult struct {
+	// TotalVotes is the new total number of votes for the option that was voted for.
+	TotalVotes int
+}
+
+type ActivitySummary struct {
+	ActivityID string
+}
