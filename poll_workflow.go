@@ -16,12 +16,18 @@ type PollConfig struct {
 	DurationSeconds int      // if 0, the poll will run indefinitely
 	StartBlocked    bool     // if true, the poll will not start until a start_poll signal is received
 	SingleVote      bool     // if true, a user can only vote once
+	// Payment-related fields
+	PaymentRequired bool    // if true, poll requires payment before accepting votes
+	PaymentWallet   string  // Solana wallet address to receive payment
+	PaymentAmount   float64 // Amount in SOL required for payment
 }
 
 // PollState is the dynamic state of a poll.
 type PollState struct {
-	Options map[string]int
-	Voters  map[string]struct{}
+	Options      map[string]int
+	Voters       map[string]struct{}
+	PaymentPaid  bool   // true if payment has been received
+	PaymentTxnID string // Solana transaction ID of the payment
 }
 
 // PollSummary is now defined in types.go
@@ -106,6 +112,10 @@ func PollWorkflow(ctx workflow.Context, config PollConfig) (PollSummary, error) 
 	}
 
 	err = workflow.SetUpdateHandler(ctx, "vote", func(ctx workflow.Context, update VoteUpdate) (VoteUpdateResult, error) {
+		// Check if payment is required but not yet received
+		if config.PaymentRequired && !state.PaymentPaid {
+			return VoteUpdateResult{}, fmt.Errorf("poll requires payment before voting - please complete payment first")
+		}
 		if allowedVoters != nil {
 			if _, ok := allowedVoters[update.UserID]; !ok {
 				return VoteUpdateResult{}, fmt.Errorf("vote rejected for non-allowed voter: %s", update.UserID)
@@ -133,6 +143,48 @@ func PollWorkflow(ctx workflow.Context, config PollConfig) (PollSummary, error) 
 		startChan := workflow.GetSignalChannel(ctx, "start_poll")
 		startChan.Receive(ctx, nil) // Block until signal is received
 		logger.Info("Poll started.")
+	}
+
+	// Wait for payment if required
+	if config.PaymentRequired {
+		logger.Info("Poll requires payment. Waiting for payment to be received...",
+			"wallet", config.PaymentWallet,
+			"amount", config.PaymentAmount)
+
+		// Execute the WaitForPayment activity
+		activityOptions := workflow.ActivityOptions{
+			StartToCloseTimeout: 7 * 24 * time.Hour, // Max 7 days to receive payment
+		}
+		activityCtx := workflow.WithActivityOptions(ctx, activityOptions)
+
+		var paymentOutput WaitForPaymentOutput
+		workflowID := workflow.GetInfo(ctx).WorkflowExecution.ID
+
+		// Get forohtoo server URL from workflow environment (passed in from server)
+		forohtooURL := "http://localhost:8000" // Default fallback
+		if config.PaymentWallet != "" {
+			forohtooURL = "http://localhost:8000" // This will be passed via config in the future
+		}
+
+		paymentInput := WaitForPaymentInput{
+			ForohtooServerURL: forohtooURL,
+			PaymentWallet:     config.PaymentWallet,
+			WorkflowID:        workflowID,
+			ExpectedAmount:    config.PaymentAmount,
+		}
+
+		err = workflow.ExecuteActivity(activityCtx, WaitForPayment, paymentInput).Get(activityCtx, &paymentOutput)
+		if err != nil {
+			logger.Error("Payment wait failed", "error", err)
+			return PollSummary{}, fmt.Errorf("failed to receive payment: %w", err)
+		}
+
+		// Update state to mark payment as received
+		state.PaymentPaid = true
+		state.PaymentTxnID = paymentOutput.TransactionID
+		logger.Info("Payment received! Poll is now accepting votes.",
+			"transactionID", paymentOutput.TransactionID,
+			"amount", paymentOutput.Amount)
 	}
 
 	var timerFuture workflow.Future

@@ -1,22 +1,21 @@
 module github.com/brojonat/github-to-img-to-invitational-poll
 
-go 1.25.0
+go 1.25.1
 
 require (
+	github.com/brojonat/forohtoo v0.0.0-20251014203639-9888f4114637
 	github.com/chai2010/webp v1.4.0
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/minio/minio-go/v7 v7.0.71
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
-	go.temporal.io/api v1.29.1
-	go.temporal.io/sdk v1.26.0
+	go.temporal.io/api v1.53.0
+	go.temporal.io/sdk v1.37.0
 )
 
 require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
-	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a // indirect
@@ -28,13 +27,10 @@ require (
 	github.com/google/s2a-go v0.1.8 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0 // indirect
-	github.com/invopop/jsonschema v0.13.0 // indirect
-	github.com/mailru/easyjson v0.7.7 // indirect
-	github.com/pborman/uuid v1.2.1 // indirect
-	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
+	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.2 // indirect
+	github.com/nexus-rpc/sdk-go v0.3.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
-	golang.org/x/exp v0.0.0-20231127185646-65229373498e // indirect
+	golang.org/x/sync v0.17.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 )
 
