@@ -852,10 +852,13 @@ func (s *APIServer) handleGetPollDetails() http.Handler {
 		if config.PaymentRequired && !state.PaymentPaid {
 			// Format amount with proper precision (avoid scientific notation)
 			amountStr := strconv.FormatFloat(config.PaymentAmount, 'f', -1, 64)
-			// Build Solana Pay URI - recipient address should NOT be URL-encoded
-			paymentURLStr := fmt.Sprintf("solana:%s?amount=%s&memo=%s",
+			// USDC mint address on Solana mainnet
+			usdcMint := "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+			// Build Solana Pay URI for USDC transfer
+			paymentURLStr := fmt.Sprintf("solana:%s?amount=%s&spl-token=%s&memo=%s",
 				config.PaymentWallet,
 				amountStr,
+				usdcMint,
 				url.QueryEscape(workflowID))
 			// Convert to template.URL to mark as safe for template rendering
 			paymentURL = template.URL(paymentURLStr)
