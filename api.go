@@ -116,6 +116,11 @@ func NewTemplateRenderer(logger *slog.Logger) (*TemplateRenderer, error) {
 		return nil, fmt.Errorf("failed to parse votes-partial template: %w", err)
 	}
 
+	r.templates["poll-list"], err = template.ParseFS(templateFS, "templates/base.html", "templates/poll-list.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse poll-list template: %w", err)
+	}
+
 	return r, nil
 }
 
@@ -189,6 +194,7 @@ func (s *APIServer) SetupRoutes() *APIServer {
 	mux.Handle("GET /profile/{username}", s.handleGetProfilePage())
 
 	// Poll routes
+	mux.Handle("GET /polls", s.handleListPolls())
 	mux.Handle("GET /poll/new", s.handleShowPollForm())
 	mux.Handle("POST /poll", s.handleCreatePoll())
 	mux.Handle("GET /poll/{id}", s.handleGetPollDetails())
@@ -1087,5 +1093,29 @@ func (s *APIServer) handleDeletePoll() http.Handler {
 
 		s.logger.Info("successfully deleted poll", "poll_id", pollID)
 		s.writeOK(w, map[string]string{"message": "Poll deleted successfully"})
+	})
+}
+
+// handleListPolls renders the list of all polls.
+func (s *APIServer) handleListPolls() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.logger.Debug("listing all polls")
+
+		polls, err := ListPollWorkflows(s.temporalClient, 100)
+		if err != nil {
+			s.logger.Error("failed to list polls", "error", err)
+			s.writeInternalError(w, r, "Failed to list polls: "+err.Error())
+			return
+		}
+
+		data := map[string]interface{}{
+			"Title": "All Polls",
+			"Polls": polls,
+		}
+
+		if err := s.renderer.RenderWithRequest(w, r, "poll-list", data); err != nil {
+			s.logger.Error("failed to render template", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
 	})
 }

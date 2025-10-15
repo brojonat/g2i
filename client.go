@@ -196,6 +196,70 @@ func TerminateWorkflow(c client.Client, workflowID string, reason string) error 
 	return nil
 }
 
+// PollListItem represents a poll in the list view
+type PollListItem struct {
+	WorkflowID string
+	Question   string
+	StartTime  time.Time
+	Status     string
+	VoteCount  int
+}
+
+// ListPollWorkflows lists all poll workflows
+func ListPollWorkflows(c client.Client, pageSize int) ([]PollListItem, error) {
+	ctx := context.Background()
+
+	// Query for workflows with PollWorkflow type
+	query := "WorkflowType='PollWorkflow'"
+
+	var polls []PollListItem
+	var nextPageToken []byte
+
+	for {
+		resp, err := c.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
+			PageSize:      int32(pageSize),
+			NextPageToken: nextPageToken,
+			Query:         query,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to list workflows: %w", err)
+		}
+
+		for _, exec := range resp.Executions {
+			poll := PollListItem{
+				WorkflowID: exec.Execution.WorkflowId,
+				StartTime:  exec.StartTime.AsTime(),
+				Status:     exec.Status.String(),
+			}
+
+			// Try to query the poll for its config to get the question and vote count
+			config, err := QueryPollWorkflow[PollConfig](c, poll.WorkflowID, "get_config")
+			if err == nil {
+				poll.Question = config.Question
+			}
+
+			state, err := QueryPollWorkflow[PollState](c, poll.WorkflowID, "get_state")
+			if err == nil {
+				// Count total votes
+				totalVotes := 0
+				for _, count := range state.Options {
+					totalVotes += count
+				}
+				poll.VoteCount = totalVotes
+			}
+
+			polls = append(polls, poll)
+		}
+
+		nextPageToken = resp.NextPageToken
+		if len(nextPageToken) == 0 {
+			break
+		}
+	}
+
+	return polls, nil
+}
+
 // Example usage function
 func ExampleUsage() {
 	// Create Temporal client
