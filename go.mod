@@ -3,7 +3,7 @@ module github.com/brojonat/github-to-img-to-invitational-poll
 go 1.25.1
 
 require (
-	github.com/brojonat/forohtoo v0.0.0-20251014203639-9888f4114637
+	github.com/brojonat/forohtoo v0.0.0-20251015024504-db0297e14606
 	github.com/chai2010/webp v1.4.0
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/minio/minio-go/v7 v7.0.71
