@@ -850,9 +850,12 @@ func (s *APIServer) handleGetPollDetails() http.Handler {
 		var paymentQRCode string
 		var paymentURL string
 		if config.PaymentRequired && !state.PaymentPaid {
-			paymentURL = fmt.Sprintf("solana:%s?amount=%f&memo=%s",
-				url.QueryEscape(config.PaymentWallet),
-				config.PaymentAmount,
+			// Format amount with proper precision (avoid scientific notation)
+			amountStr := strconv.FormatFloat(config.PaymentAmount, 'f', -1, 64)
+			// Build Solana Pay URI - recipient address should NOT be URL-encoded
+			paymentURL = fmt.Sprintf("solana:%s?amount=%s&spl-memo=%s",
+				config.PaymentWallet,
+				amountStr,
 				url.QueryEscape(workflowID))
 
 			qrPNG, err := qrcode.Encode(paymentURL, qrcode.Medium, 256)
