@@ -848,17 +848,19 @@ func (s *APIServer) handleGetPollDetails() http.Handler {
 
 		// Generate payment QR code if payment is required but not paid
 		var paymentQRCode string
-		var paymentURL string
+		var paymentURL template.URL
 		if config.PaymentRequired && !state.PaymentPaid {
 			// Format amount with proper precision (avoid scientific notation)
 			amountStr := strconv.FormatFloat(config.PaymentAmount, 'f', -1, 64)
 			// Build Solana Pay URI - recipient address should NOT be URL-encoded
-			paymentURL = fmt.Sprintf("solana:%s?amount=%s&spl-memo=%s",
+			paymentURLStr := fmt.Sprintf("solana:%s?amount=%s&memo=%s",
 				config.PaymentWallet,
 				amountStr,
 				url.QueryEscape(workflowID))
+			// Convert to template.URL to mark as safe for template rendering
+			paymentURL = template.URL(paymentURLStr)
 
-			qrPNG, err := qrcode.Encode(paymentURL, qrcode.Medium, 256)
+			qrPNG, err := qrcode.Encode(paymentURLStr, qrcode.Medium, 256)
 			if err != nil {
 				s.logger.Error("failed to generate QR code", "error", err)
 			} else {
