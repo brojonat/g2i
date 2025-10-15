@@ -20,19 +20,13 @@
         <img src="data:image/png;base64,{{.PaymentQRCode}}" alt="Payment QR Code" class="w-64 h-64">
       </div>
       <p class="text-gray-400 text-xs text-center mb-4">
-        Scan this QR code with your Solana wallet app to pay
+        Scan this QR code or tap the button below to pay
       </p>
-      <div class="w-full bg-gray-900 rounded p-3 text-xs font-mono">
-        <div class="text-gray-500 mb-1">Wallet:</div>
-        <div class="text-gray-300 break-all mb-3">{{.Config.PaymentWallet}}</div>
-        <div class="text-gray-500 mb-1">Amount:</div>
-        <div class="text-blue-400 mb-3">{{.Config.PaymentAmount}} SOL</div>
-        <div class="text-gray-500 mb-1">Memo (required):</div>
-        <div class="text-yellow-400 break-all">{{.WorkflowID}}</div>
-      </div>
-      <p class="text-yellow-400 text-xs text-center mt-4">
-        ⚠️ Make sure to include the memo in your transaction!
-      </p>
+      {{if .PaymentURL}}
+      <a href="{{.PaymentURL}}" class="w-full max-w-sm px-6 py-4 bg-gradient-to-r from-purple-600 to-blue-500 hover:from-purple-700 hover:to-blue-600 text-white font-bold text-lg rounded-lg shadow-lg transition-all duration-300 text-center block">
+        Open Wallet to Pay
+      </a>
+      {{end}}
     </div>
     {{end}}
   </div>
