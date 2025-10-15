@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
@@ -169,8 +170,12 @@ func NewAPIServer(temporalClient client.Client, storageProvider ObjectStorage) *
 func (s *APIServer) SetupRoutes() *APIServer {
 	mux := http.NewServeMux()
 
-	// Serve static files
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	// Serve static files - use fs.Sub to get the "static" subdirectory
+	staticSubFS, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		log.Fatalf("Failed to create static sub-filesystem: %v", err)
+	}
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSubFS))))
 
 	// Home page
 	mux.Handle("GET /", s.handleHomePage())
