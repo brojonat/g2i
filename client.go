@@ -148,7 +148,16 @@ func UpdatePollWorkflow[R any](c client.Client, workflowID string, updateName st
 	// Note: using a long poll context here to ensure we wait for the result.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	updateHandle, err := c.UpdateWorkflow(ctx, workflowID, "", updateName, updateArg)
+
+	updateOptions := client.UpdateWorkflowOptions{
+		WorkflowID:   workflowID,
+		RunID:        "", // empty string means latest run
+		UpdateName:   updateName,
+		Args:         []interface{}{updateArg},
+		WaitForStage: client.WorkflowUpdateStageCompleted,
+	}
+
+	updateHandle, err := c.UpdateWorkflow(ctx, updateOptions)
 	if err != nil {
 		return result, fmt.Errorf("failed to send update to workflow: %w", err)
 	}

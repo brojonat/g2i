@@ -115,6 +115,7 @@ func runWorker(ctx context.Context, wg *sync.WaitGroup) {
 	w.RegisterActivity(ExecuteGhCommandActivity)
 	w.RegisterActivity(GenerateResponsesTurnActivity)
 	w.RegisterActivity(CopyObject)
+	w.RegisterActivity(WaitForPayment)
 
 	// Start worker
 	stdlog.Println("Starting worker...")

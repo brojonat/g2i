@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"regexp"
@@ -19,6 +20,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
+	"github.com/skip2/go-qrcode"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 	"golang.org/x/exp/errors"
@@ -456,12 +458,42 @@ func (s *APIServer) GetPollDetails(c echo.Context) error {
 		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
 	}
 
+	// Query poll state to check payment status
+	state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
+	if err != nil {
+		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
+	}
+
+	// Generate payment QR code if payment is required but not paid
+	var paymentQRCode string
+	var paymentURL string
+	if config.PaymentRequired && !state.PaymentPaid {
+		// Build Solana payment URL: solana:<recipient>?amount=<amount>&memo=<memo>
+		paymentURL = fmt.Sprintf("solana:%s?amount=%f&memo=%s",
+			url.QueryEscape(config.PaymentWallet),
+			config.PaymentAmount,
+			url.QueryEscape(workflowID))
+
+		// Generate QR code as PNG bytes
+		qrPNG, err := qrcode.Encode(paymentURL, qrcode.Medium, 256)
+		if err != nil {
+			c.Logger().Errorf("Failed to generate QR code: %v", err)
+		} else {
+			// Encode as base64 for embedding in HTML
+			paymentQRCode = base64.StdEncoding.EncodeToString(qrPNG)
+		}
+	}
+
 	// Fetch image URLs for each poll option.
 	return c.Render(http.StatusOK, "poll-details", echo.Map{
-		"Title":      "Poll Details",
-		"WorkflowID": workflowID,
-		"Config":     config,
-		"Options":    options,
+		"Title":          "Poll Details",
+		"WorkflowID":     workflowID,
+		"Config":         config,
+		"Options":        options,
+		"PaymentPaid":    state.PaymentPaid,
+		"PaymentQRCode":  paymentQRCode,
+		"PaymentURL":     paymentURL,
+		"PaymentTxnID":   state.PaymentTxnID,
 	})
 }
 

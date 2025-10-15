@@ -8,10 +8,13 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/brojonat/forohtoo/client"
 	"github.com/chai2010/webp"
 	"github.com/nfnt/resize"
 	"go.temporal.io/sdk/activity"
@@ -164,7 +167,7 @@ func GenerateContent(ctx context.Context, prompt, modelName, imageFormat string,
 		return GenerationResult{}, fmt.Errorf("failed to generate content: %w", err)
 	}
 
-	if result.Candidates == nil || len(result.Candidates) == 0 || result.Candidates[0].Content == nil || len(result.Candidates[0].Content.Parts) == 0 {
+	if len(result.Candidates) == 0 || result.Candidates[0].Content == nil || len(result.Candidates[0].Content.Parts) == 0 {
 		return GenerationResult{}, fmt.Errorf("no content returned from API")
 	}
 
@@ -279,6 +282,56 @@ func StoreContent(ctx context.Context, data []byte, provider, bucket, key, keyPr
 		PublicURL:   publicURL,
 		StorageKey:  key,
 		ContentType: contentType,
+	}, nil
+}
+
+// WaitForPaymentInput defines the input for the WaitForPayment activity.
+type WaitForPaymentInput struct {
+	ForohtooServerURL string  // URL of the forohtoo server
+	PaymentWallet     string  // Solana wallet address to monitor
+	WorkflowID        string  // Workflow ID to match in transaction memo
+	ExpectedAmount    float64 // Expected payment amount in SOL
+}
+
+// WaitForPaymentOutput defines the output from the WaitForPayment activity.
+type WaitForPaymentOutput struct {
+	TransactionID string // Solana transaction ID
+	Amount        float64
+	Memo          string
+}
+
+// WaitForPayment waits for a Solana payment transaction to arrive via forohtoo.
+func WaitForPayment(ctx context.Context, input WaitForPaymentInput) (WaitForPaymentOutput, error) {
+	logger := activity.GetLogger(ctx)
+	logger.Info("Waiting for payment", "wallet", input.PaymentWallet, "workflowID", input.WorkflowID)
+
+	// Create forohtoo client
+	cl := client.NewClient(input.ForohtooServerURL, nil, slog.Default())
+
+	// start tracking the wallet
+	err := cl.Register(ctx, input.PaymentWallet, 10*time.Second)
+	if err != nil {
+		logger.Error("Failed to register wallet", "error", err)
+		return WaitForPaymentOutput{}, fmt.Errorf("failed to register wallet: %w", err)
+	}
+
+	// Wait for a transaction that matches the workflow ID in the memo
+	txn, err := cl.Await(ctx, input.PaymentWallet, func(txn *client.Transaction) bool {
+		// Check if the transaction memo contains the workflow ID
+		return strings.Contains(txn.Memo, input.WorkflowID) && txn.Amount == int64(input.ExpectedAmount)
+	})
+
+	if err != nil {
+		logger.Error("Failed to receive payment", "error", err)
+		return WaitForPaymentOutput{}, fmt.Errorf("failed to receive payment: %w", err)
+	}
+
+	logger.Info("Payment received", "transactionID", txn.Signature, "amount", txn.Amount)
+
+	return WaitForPaymentOutput{
+		TransactionID: txn.Signature,
+		Amount:        float64(txn.Amount),
+		Memo:          txn.Memo,
 	}, nil
 }
 
