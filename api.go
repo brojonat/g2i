@@ -370,6 +370,21 @@ func (s *APIServer) renderErrorWithRedirect(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+// writeBadRequest writes a 400 Bad Request error response.
+func (s *APIServer) writeBadRequest(w http.ResponseWriter, r *http.Request, message string) {
+	s.renderError(w, r, message, http.StatusBadRequest)
+}
+
+// writeInternalError writes a 500 Internal Server Error response.
+func (s *APIServer) writeInternalError(w http.ResponseWriter, r *http.Request, message string) {
+	s.renderError(w, r, message, http.StatusInternalServerError)
+}
+
+// writeNotFound writes a 404 Not Found error response with redirect.
+func (s *APIServer) writeNotFound(w http.ResponseWriter, r *http.Request, message string) {
+	s.renderErrorWithRedirect(w, r, message, "/", 5, http.StatusNotFound)
+}
+
 // Handler functions
 
 // handleHomePage renders the home page.
@@ -377,7 +392,7 @@ func (s *APIServer) handleHomePage() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Handle 404 for non-root paths
 		if r.URL.Path != "/" {
-			s.renderErrorWithRedirect(w, r, "Page not found. You will be redirected to the homepage.", "/", 5, http.StatusNotFound)
+			s.writeNotFound(w, r, "Page not found. You will be redirected to the homepage.")
 			return
 		}
 
@@ -424,7 +439,7 @@ func (s *APIServer) handleGetVisualizationForm() http.Handler {
 func (s *APIServer) handleStartContentGeneration() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			s.renderError(w, r, err.Error(), http.StatusBadRequest)
+			s.writeBadRequest(w, r, err.Error())
 			return
 		}
 
@@ -432,22 +447,22 @@ func (s *APIServer) handleStartContentGeneration() http.Handler {
 		modelName := r.FormValue("model_name")
 
 		if len(githubUsername) > MaxGitHubUsernameLength {
-			s.renderError(w, r, "GitHub username is too long.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "GitHub username is too long.")
 			return
 		}
 		if len(modelName) > MaxModelNameLength {
-			s.renderError(w, r, "Model name is too long.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Model name is too long.")
 			return
 		}
 
 		width, err := strconv.Atoi(os.Getenv("IMAGE_WIDTH"))
 		if err != nil {
-			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			s.writeInternalError(w, r, err.Error())
 			return
 		}
 		height, err := strconv.Atoi(os.Getenv("IMAGE_HEIGHT"))
 		if err != nil {
-			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			s.writeInternalError(w, r, err.Error())
 			return
 		}
 
@@ -469,7 +484,7 @@ func (s *APIServer) handleStartContentGeneration() http.Handler {
 
 		_, err = StartWorkflow(s.temporalClient, input)
 		if err != nil {
-			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			s.writeInternalError(w, r, err.Error())
 			return
 		}
 
@@ -483,7 +498,7 @@ func (s *APIServer) handleGetWorkflowStatus() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		workflowID := r.PathValue("id")
 		if len(workflowID) > MaxWorkflowIDLength {
-			s.renderError(w, r, "Invalid workflow ID.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Invalid workflow ID.")
 			return
 		}
 
@@ -492,7 +507,7 @@ func (s *APIServer) handleGetWorkflowStatus() http.Handler {
 		state, err := QueryWorkflowState(s.temporalClient, workflowID)
 		if err != nil {
 			s.logger.Error("error getting workflow result", "workflow_id", workflowID, "error", err)
-			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			s.writeInternalError(w, r, err.Error())
 			return
 		}
 
@@ -514,7 +529,7 @@ func (s *APIServer) handleGetWorkflowDetails() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		workflowID := r.PathValue("id")
 		if len(workflowID) > MaxWorkflowIDLength {
-			s.renderError(w, r, "Invalid workflow ID.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Invalid workflow ID.")
 			return
 		}
 
@@ -523,7 +538,7 @@ func (s *APIServer) handleGetWorkflowDetails() http.Handler {
 		result, err := GetWorkflowResult(s.temporalClient, workflowID)
 		if err != nil {
 			s.logger.Error("error getting workflow result", "workflow_id", workflowID, "error", err)
-			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			s.writeInternalError(w, r, err.Error())
 			return
 		}
 
@@ -546,7 +561,7 @@ func (s *APIServer) handleGetProfilePage() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		username := r.PathValue("username")
 		if len(username) > MaxGitHubUsernameLength {
-			s.renderError(w, r, "Invalid username.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Invalid username.")
 			return
 		}
 
@@ -556,7 +571,7 @@ func (s *APIServer) handleGetProfilePage() http.Handler {
 		desc, err := GetWorkflowDescription(s.temporalClient, workflowID)
 		if err != nil {
 			s.logger.Debug("error getting workflow description", "workflow_id", workflowID, "error", err)
-			s.renderErrorWithRedirect(w, r, "Workflow for this user not found.", "/", 5, http.StatusNotFound)
+			s.writeNotFound(w, r, "Workflow for this user not found.")
 			return
 		}
 
@@ -578,7 +593,7 @@ func (s *APIServer) handleGetProfilePage() http.Handler {
 			result, err := GetWorkflowResult(s.temporalClient, workflowID)
 			if err != nil {
 				s.logger.Error("error getting workflow result", "workflow_id", workflowID, "error", err)
-				s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+				s.writeInternalError(w, r, err.Error())
 				return
 			}
 			data := map[string]interface{}{
@@ -592,7 +607,7 @@ func (s *APIServer) handleGetProfilePage() http.Handler {
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 			}
 		default: // FAILED, CANCELED, TERMINATED, TIMED_OUT, etc.
-			s.renderErrorWithRedirect(w, r, "Profile generation for this user did not complete successfully.", "/", 5, http.StatusNotFound)
+			s.writeNotFound(w, r, "Profile generation for this user did not complete successfully.")
 		}
 	})
 }
@@ -616,17 +631,17 @@ func (s *APIServer) handleShowPollForm() http.Handler {
 func (s *APIServer) handleCreatePoll() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			s.renderError(w, r, err.Error(), http.StatusBadRequest)
+			s.writeBadRequest(w, r, err.Error())
 			return
 		}
 
 		pollRequest := r.FormValue("poll_request")
 		if pollRequest == "" {
-			s.renderError(w, r, "Poll request cannot be empty", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Poll request cannot be empty")
 			return
 		}
 		if len(pollRequest) > MaxPollRequestLength {
-			s.renderError(w, r, fmt.Sprintf("Poll request is too long. Please limit to %d characters.", MaxPollRequestLength), http.StatusBadRequest)
+			s.writeBadRequest(w, r, fmt.Sprintf("Poll request is too long. Please limit to %d characters.", MaxPollRequestLength))
 			return
 		}
 
@@ -642,7 +657,7 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 		)
 		if err != nil {
 			s.logger.Error("failed to parse poll request", "error", err)
-			s.renderError(w, r, "Failed to parse poll request: "+err.Error(), http.StatusInternalServerError)
+			s.writeInternalError(w, r, "Failed to parse poll request: "+err.Error())
 			return
 		}
 
@@ -671,7 +686,7 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 			}
 
 			s.logger.Error("failed to start poll workflow", "error", err)
-			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			s.writeInternalError(w, r, err.Error())
 			return
 		}
 
@@ -775,25 +790,25 @@ func (s *APIServer) handleGetPollDetails() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		workflowID := r.PathValue("id")
 		if len(workflowID) > MaxWorkflowIDLength {
-			s.renderError(w, r, "Invalid poll ID.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Invalid poll ID.")
 			return
 		}
 
 		config, err := QueryPollWorkflow[PollConfig](s.temporalClient, workflowID, "get_config")
 		if err != nil {
-			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			s.writeInternalError(w, r, err.Error())
 			return
 		}
 
 		options, err := QueryPollWorkflow[[]string](s.temporalClient, workflowID, "get_options")
 		if err != nil {
-			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			s.writeInternalError(w, r, err.Error())
 			return
 		}
 
 		state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
 		if err != nil {
-			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			s.writeInternalError(w, r, err.Error())
 			return
 		}
 
@@ -837,13 +852,13 @@ func (s *APIServer) handleGetPollResults() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		workflowID := r.PathValue("id")
 		if len(workflowID) > MaxWorkflowIDLength {
-			s.renderError(w, r, "Invalid poll ID.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Invalid poll ID.")
 			return
 		}
 
 		options, err := QueryPollWorkflow[[]string](s.temporalClient, workflowID, "get_options")
 		if err != nil {
-			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			s.writeInternalError(w, r, err.Error())
 			return
 		}
 
@@ -866,11 +881,11 @@ func (s *APIServer) handleGetPollProfile() http.Handler {
 		option := r.PathValue("option")
 
 		if len(workflowID) > MaxWorkflowIDLength {
-			s.renderError(w, r, "Invalid poll ID.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Invalid poll ID.")
 			return
 		}
 		if len(option) > MaxOptionLength {
-			s.renderError(w, r, "Invalid option.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Invalid option.")
 			return
 		}
 
@@ -913,11 +928,11 @@ func (s *APIServer) handleGetPollVotes() http.Handler {
 		option := r.PathValue("option")
 
 		if len(workflowID) > MaxWorkflowIDLength {
-			s.renderError(w, r, "Invalid poll ID.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Invalid poll ID.")
 			return
 		}
 		if len(option) > MaxOptionLength {
-			s.renderError(w, r, "Invalid option.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Invalid option.")
 			return
 		}
 
@@ -954,12 +969,12 @@ func (s *APIServer) handleVoteOnPoll() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		workflowID := r.PathValue("id")
 		if len(workflowID) > MaxWorkflowIDLength {
-			s.renderError(w, r, "Invalid poll ID.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Invalid poll ID.")
 			return
 		}
 
 		if err := r.ParseForm(); err != nil {
-			s.renderError(w, r, err.Error(), http.StatusBadRequest)
+			s.writeBadRequest(w, r, err.Error())
 			return
 		}
 
@@ -987,13 +1002,13 @@ func (s *APIServer) handleVoteOnPoll() http.Handler {
 			Amount: 1,
 		}
 		if len(update.Option) > MaxOptionLength {
-			s.renderError(w, r, "Invalid option.", http.StatusBadRequest)
+			s.writeBadRequest(w, r, "Invalid option.")
 			return
 		}
 
 		result, err := UpdatePollWorkflow[VoteUpdateResult](s.temporalClient, workflowID, "vote", update)
 		if err != nil {
-			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			s.writeInternalError(w, r, err.Error())
 			return
 		}
 
