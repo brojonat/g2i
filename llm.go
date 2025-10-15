@@ -288,6 +288,8 @@ func ParsePollRequestWithLLM(ctx context.Context, p OpenAIConfig, pollRequest st
 	}
 
 	// Limit to 5 users per poll; we can change later, this is just to enable deployment
-	parsedRequest.Usernames = parsedRequest.Usernames[:5]
+	if len(parsedRequest.Usernames) > 5 {
+		parsedRequest.Usernames = parsedRequest.Usernames[:5]
+	}
 	return parsedRequest, nil
 }
