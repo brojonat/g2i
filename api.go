@@ -385,6 +385,29 @@ func (s *APIServer) writeNotFound(w http.ResponseWriter, r *http.Request, messag
 	s.renderErrorWithRedirect(w, r, message, "/", 5, http.StatusNotFound)
 }
 
+// JSON response helpers
+
+// writeOK writes a 200 OK JSON response.
+func (s *APIServer) writeOK(w http.ResponseWriter, data interface{}) {
+	if err := s.writeJSON(w, data, http.StatusOK); err != nil {
+		s.logger.Error("failed to write JSON response", "error", err)
+	}
+}
+
+// writeJSONBadRequest writes a 400 Bad Request JSON error response.
+func (s *APIServer) writeJSONBadRequest(w http.ResponseWriter, message string) {
+	if err := s.writeJSON(w, map[string]string{"error": message}, http.StatusBadRequest); err != nil {
+		s.logger.Error("failed to write JSON response", "error", err)
+	}
+}
+
+// writeJSONInternalError writes a 500 Internal Server Error JSON response.
+func (s *APIServer) writeJSONInternalError(w http.ResponseWriter, message string) {
+	if err := s.writeJSON(w, map[string]string{"error": message}, http.StatusInternalServerError); err != nil {
+		s.logger.Error("failed to write JSON response", "error", err)
+	}
+}
+
 // Handler functions
 
 // handleHomePage renders the home page.
@@ -1030,7 +1053,7 @@ func (s *APIServer) handleDeletePoll() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pollID := r.PathValue("id")
 		if len(pollID) > MaxWorkflowIDLength {
-			s.writeJSON(w, map[string]string{"error": "Invalid poll ID."}, http.StatusBadRequest)
+			s.writeJSONBadRequest(w, "Invalid poll ID.")
 			return
 		}
 
@@ -1053,11 +1076,11 @@ func (s *APIServer) handleDeletePoll() http.Handler {
 		err = s.storageProvider.Delete(r.Context(), bucket, pollID+"/")
 		if err != nil {
 			s.logger.Error("failed to delete poll storage", "poll_id", pollID, "error", err)
-			s.writeJSON(w, map[string]string{"error": "Failed to delete poll: " + err.Error()}, http.StatusInternalServerError)
+			s.writeJSONInternalError(w, "Failed to delete poll: "+err.Error())
 			return
 		}
 
 		s.logger.Info("successfully deleted poll", "poll_id", pollID)
-		s.writeJSON(w, map[string]string{"message": "Poll deleted successfully"}, http.StatusOK)
+		s.writeOK(w, map[string]string{"message": "Poll deleted successfully"})
 	})
 }
