@@ -293,6 +293,33 @@ make restart-server
 make restart-worker
 ```
 
+### ⚠️ IMPORTANT: Deploy After Committing
+
+**Always redeploy after committing changes!** The Docker image tag is based on the git commit hash. If you:
+
+1. Make code changes
+2. Commit them (new commit hash: `abc1234`)
+3. But forget to redeploy
+
+Then production is still running the old image with the previous commit hash. **The commit changes the git hash, so you MUST deploy again with the new hash.**
+
+**Correct workflow:**
+```bash
+# 1. Make and test changes locally
+# 2. Commit the changes
+git add .
+git commit -m "Fix feature X"
+
+# 3. Deploy with the NEW commit hash
+make deploy-all
+
+# 4. Verify the rollout completed
+kubectl rollout status deployment/gip-api
+kubectl rollout status deployment/gip-worker
+```
+
+**Common mistake:** Committing changes but forgetting to redeploy, leaving production on the old image.
+
 ## Version Control with Git and GitHub CLI
 
 ### Using Git

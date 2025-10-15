@@ -176,6 +176,8 @@ footer {
     display: flex;
     flex-direction: row;
     gap: 1rem;
+    flex-wrap: wrap;
+    justify-content: center;
 }
 
 /* Responsive Design */
@@ -196,5 +198,11 @@ footer {
 
     .glass-container h2 {
         font-size: 2rem;
+    }
+
+    .panel-nav-item {
+        font-size: 1rem;
+        padding: 0.4rem 0.8rem;
+        letter-spacing: 0.5px;
     }
 }
