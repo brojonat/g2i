@@ -3,6 +3,52 @@
   <h2 class="text-3xl font-bold text-center mb-8 cyber-text-glow">
     {{ .Config.Question }}
   </h2>
+
+  {{/* Show payment info if payment is required but not paid */}}
+  {{if and .Config.PaymentRequired (not .PaymentPaid)}}
+  <div class="max-w-md mx-auto mb-8 bg-gray-800 border border-blue-500 rounded-lg p-6">
+    <div class="text-center mb-4">
+      <h3 class="text-xl font-bold text-blue-400 mb-2">Payment Required</h3>
+      <p class="text-gray-300 text-sm mb-4">
+        This poll requires payment of <span class="font-mono text-blue-400">{{.Config.PaymentAmount}} SOL</span> before voting can begin.
+      </p>
+    </div>
+
+    {{if .PaymentQRCode}}
+    <div class="flex flex-col items-center">
+      <div class="bg-white p-4 rounded-lg mb-4">
+        <img src="data:image/png;base64,{{.PaymentQRCode}}" alt="Payment QR Code" class="w-64 h-64">
+      </div>
+      <p class="text-gray-400 text-xs text-center mb-4">
+        Scan this QR code with your Solana wallet app to pay
+      </p>
+      <div class="w-full bg-gray-900 rounded p-3 text-xs font-mono">
+        <div class="text-gray-500 mb-1">Wallet:</div>
+        <div class="text-gray-300 break-all mb-3">{{.Config.PaymentWallet}}</div>
+        <div class="text-gray-500 mb-1">Amount:</div>
+        <div class="text-blue-400 mb-3">{{.Config.PaymentAmount}} SOL</div>
+        <div class="text-gray-500 mb-1">Memo (required):</div>
+        <div class="text-yellow-400 break-all">{{.WorkflowID}}</div>
+      </div>
+      <p class="text-yellow-400 text-xs text-center mt-4">
+        ⚠️ Make sure to include the memo in your transaction!
+      </p>
+    </div>
+    {{end}}
+  </div>
+  {{else if .PaymentPaid}}
+  <div class="max-w-md mx-auto mb-8 bg-gray-800 border border-green-500 rounded-lg p-4">
+    <div class="text-center">
+      <h3 class="text-lg font-bold text-green-400 mb-2">✓ Payment Received</h3>
+      {{if .PaymentTxnID}}
+      <p class="text-gray-400 text-xs font-mono break-all">
+        Transaction: {{.PaymentTxnID}}
+      </p>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+
   {{template "poll-results-partial" .}}
 </div>
 {{end}}
