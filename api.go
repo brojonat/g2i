@@ -4,22 +4,22 @@ import (
 	"context"
 	"embed"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"html/template"
-	"io"
+	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
-	"github.com/labstack/gommon/log"
 	"github.com/skip2/go-qrcode"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
@@ -39,58 +39,94 @@ const (
 	MaxOptionLength = 100
 )
 
-// requestLogger is a custom middleware that logs all requests.
-func requestLogger(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		// Log the incoming request
-		c.Logger().Debugf("→ %s %s", c.Request().Method, c.Request().RequestURI)
-
-		// Call the next handler in the chain
-		err := next(c)
-
-		// Get the response status code
-		status := c.Response().Status
-
-		// Log the response
-		if status >= 500 {
-			logMsg := fmt.Sprintf("← %s %s - %d", c.Request().Method, c.Request().RequestURI, status)
-			if err != nil {
-				logMsg = fmt.Sprintf("%s (error: %v)", logMsg, err)
-			}
-			c.Logger().Error(logMsg)
-		} else if status >= 400 {
-			c.Logger().Infof("← %s %s - %d", c.Request().Method, c.Request().RequestURI, status)
-		} else {
-			c.Logger().Debugf("← %s %s - %d", c.Request().Method, c.Request().RequestURI, status)
-		}
-
-		return err
-	}
-}
-
 //go:embed all:static
 var staticFS embed.FS
 
 //go:embed all:templates
 var templateFS embed.FS
 
-// TemplateRenderer is a custom html/template renderer for Echo framework
+// TemplateRenderer handles HTML template rendering.
 type TemplateRenderer struct {
 	templates map[string]*template.Template
+	logger    *slog.Logger
 }
 
-// Render renders a template document
-func (t *TemplateRenderer) Render(w io.Writer, name string, data interface{}, c echo.Context) error {
-	tmpl, ok := t.templates[name]
-	if !ok {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Template not found: "+name)
+// NewTemplateRenderer creates a new template renderer and loads all templates.
+func NewTemplateRenderer(logger *slog.Logger) (*TemplateRenderer, error) {
+	r := &TemplateRenderer{
+		templates: make(map[string]*template.Template),
+		logger:    logger,
 	}
 
-	isHTMX := c.Request().Header.Get("HX-Request") == "true"
+	// Load all templates using the same pattern as the original implementation
+	var err error
+	r.templates["index"], err = template.ParseFS(templateFS, "templates/base.html", "templates/index.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse index template: %w", err)
+	}
+
+	r.templates["workflow-status"], err = template.ParseFS(templateFS, "templates/base.html", "templates/workflow-status.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse workflow-status template: %w", err)
+	}
+
+	r.templates["workflow-details"], err = template.ParseFS(templateFS, "templates/base.html", "templates/workflow-details.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse workflow-details template: %w", err)
+	}
+
+	r.templates["error"], err = template.ParseFS(templateFS, "templates/base.html", "templates/error.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse error template: %w", err)
+	}
+
+	r.templates["poll-form"], err = template.ParseFS(templateFS, "templates/base.html", "templates/poll-form.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse poll-form template: %w", err)
+	}
+
+	r.templates["poll-details"], err = template.ParseFS(templateFS, "templates/base.html", "templates/poll-details.html", "templates/poll-results-partial.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse poll-details template: %w", err)
+	}
+
+	r.templates["poll-results-partial"], err = template.ParseFS(templateFS, "templates/poll-results-partial.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse poll-results-partial template: %w", err)
+	}
+
+	r.templates["generate-form"], err = template.ParseFS(templateFS, "templates/base.html", "templates/generate-form.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse generate-form template: %w", err)
+	}
+
+	r.templates["spinner-partial"], err = template.ParseFS(templateFS, "templates/spinner-partial.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse spinner-partial template: %w", err)
+	}
+
+	r.templates["image-partial"], err = template.ParseFS(templateFS, "templates/image-partial.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse image-partial template: %w", err)
+	}
+
+	r.templates["votes-partial"], err = template.ParseFS(templateFS, "templates/votes-partial.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse votes-partial template: %w", err)
+	}
+
+	return r, nil
+}
+
+// RenderWithRequest renders a template with HTMX support.
+func (r *TemplateRenderer) RenderWithRequest(w http.ResponseWriter, req *http.Request, name string, data interface{}) error {
+	tmpl, ok := r.templates[name]
+	if !ok {
+		return fmt.Errorf("template not found: %s", name)
+	}
+
+	isHTMX := req.Header.Get("HX-Request") == "true"
 	if isHTMX {
-		// For HTMX requests, we determine if we're rendering a partial or a full content swap.
-		// Our convention: if a template defines a block with the same name as the template key,
-		// it's a partial and we render that block. Otherwise, we render the "content" block.
 		block := "content"
 		if tmpl.Lookup(name) != nil {
 			block = name
@@ -101,6 +137,95 @@ func (t *TemplateRenderer) Render(w io.Writer, name string, data interface{}, c 
 	return tmpl.ExecuteTemplate(w, "base.html", data)
 }
 
+// APIServer for handling HTTP requests
+type APIServer struct {
+	temporalClient  client.Client
+	storageProvider ObjectStorage
+	renderer        *TemplateRenderer
+	logger          *slog.Logger
+	server          *http.Server
+}
+
+// NewAPIServer creates a new API server
+func NewAPIServer(temporalClient client.Client, storageProvider ObjectStorage) *APIServer {
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	renderer, err := NewTemplateRenderer(logger)
+	if err != nil {
+		log.Fatalf("Failed to create template renderer: %v", err)
+	}
+
+	return &APIServer{
+		temporalClient:  temporalClient,
+		storageProvider: storageProvider,
+		renderer:        renderer,
+		logger:          logger,
+	}
+}
+
+// SetupRoutes sets up the API routes and returns the configured server
+func (s *APIServer) SetupRoutes() *APIServer {
+	mux := http.NewServeMux()
+
+	// Serve static files
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+
+	// Home page
+	mux.Handle("GET /", s.handleHomePage())
+	mux.Handle("GET /ping", s.handlePing())
+
+	// Workflow routes
+	mux.Handle("POST /generate", s.handleStartContentGeneration())
+	mux.Handle("GET /generate-form", s.handleGetGenerateForm())
+	mux.Handle("GET /workflow/{id}/status", s.handleGetWorkflowStatus())
+	mux.Handle("GET /workflow/{id}", s.handleGetWorkflowDetails())
+	mux.Handle("GET /profile/{username}", s.handleGetProfilePage())
+
+	// Poll routes
+	mux.Handle("GET /poll/new", s.handleShowPollForm())
+	mux.Handle("POST /poll", s.handleCreatePoll())
+	mux.Handle("GET /poll/{id}", s.handleGetPollDetails())
+	mux.Handle("GET /poll/{id}/results", s.handleGetPollResults())
+	mux.Handle("POST /poll/{id}/vote", s.handleVoteOnPoll())
+	mux.Handle("DELETE /poll/{id}", s.handleDeletePoll())
+	mux.Handle("GET /poll/{id}/profile/{option}", s.handleGetPollProfile())
+	mux.Handle("GET /poll/{id}/votes/{option}", s.handleGetPollVotes())
+
+	// Visualization routes
+	mux.Handle("GET /visualization-form", s.handleGetVisualizationForm())
+
+	// Wrap with middleware (order matters: outer middleware runs first)
+	handler := s.recoveryMiddleware(
+		s.loggingMiddleware(
+			s.corsMiddleware(mux),
+		),
+	)
+
+	s.server = &http.Server{
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	return s
+}
+
+// Start starts the HTTP server
+func (s *APIServer) Start(addr string) error {
+	s.server.Addr = addr
+	s.logger.Info("starting HTTP server", "addr", addr)
+	return s.server.ListenAndServe()
+}
+
+// Shutdown gracefully shuts down the HTTP server
+func (s *APIServer) Shutdown(ctx context.Context) error {
+	s.logger.Info("shutting down HTTP server")
+	return s.server.Shutdown(ctx)
+}
+
 // getEnvB64 reads a base64-encoded environment variable and returns the decoded string.
 func getEnvB64(key string) string {
 	val := os.Getenv(key)
@@ -109,31 +234,21 @@ func getEnvB64(key string) string {
 	}
 	decoded, err := base64.StdEncoding.DecodeString(val)
 	if err != nil {
-		// Consider logging this error
 		return ""
 	}
 	return string(decoded)
 }
 
-// createMyRender creates the template renderer
-func createMyRender() *TemplateRenderer {
-	r := &TemplateRenderer{
-		templates: make(map[string]*template.Template),
+// sanitizeWorkflowID sanitizes a string for use as a workflow ID.
+func sanitizeWorkflowID(input string) string {
+	reg := regexp.MustCompile(`[^a-zA-Z0-9-_]+`)
+	sanitized := reg.ReplaceAllString(input, "-")
+	sanitized = strings.ToLower(strings.Trim(sanitized, "-"))
+	const maxLength = 200
+	if len(sanitized) > maxLength {
+		sanitized = sanitized[:maxLength]
 	}
-
-	r.templates["index"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/index.html"))
-	r.templates["workflow-status"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/workflow-status.html"))
-	r.templates["workflow-details"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/workflow-details.html"))
-	r.templates["error"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/error.html"))
-	r.templates["poll-form"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/poll-form.html"))
-	r.templates["poll-details"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/poll-details.html", "templates/poll-results-partial.html"))
-	r.templates["poll-results-partial"] = template.Must(template.ParseFS(templateFS, "templates/poll-results-partial.html"))
-	r.templates["generate-form"] = template.Must(template.ParseFS(templateFS, "templates/base.html", "templates/generate-form.html"))
-	r.templates["spinner-partial"] = template.Must(template.ParseFS(templateFS, "templates/spinner-partial.html"))
-	r.templates["image-partial"] = template.Must(template.ParseFS(templateFS, "templates/image-partial.html"))
-	r.templates["votes-partial"] = template.Must(template.ParseFS(templateFS, "templates/votes-partial.html"))
-
-	return r
+	return sanitized
 }
 
 // GenerateRequest defines the expected input from the client
@@ -142,273 +257,203 @@ type GenerateRequest struct {
 	ModelName      string `form:"model_name"`
 }
 
-// APIServer for handling HTTP requests
-type APIServer struct {
-	temporalClient  client.Client
-	storageProvider ObjectStorage
-}
+// Middleware functions
 
-// NewAPIServer creates a new API server
-func NewAPIServer(temporalClient client.Client, storageProvider ObjectStorage) *APIServer {
-	return &APIServer{
-		temporalClient:  temporalClient,
-		storageProvider: storageProvider,
-	}
-}
+// loggingMiddleware logs all HTTP requests and responses.
+func (s *APIServer) loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 
-// StartContentGeneration handles POST /generate
-func (s *APIServer) StartContentGeneration(c echo.Context) error {
-	var req GenerateRequest
-	if err := c.Bind(&req); err != nil {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": err.Error()})
-	}
+		s.logger.Debug("http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+		)
 
-	if len(req.GitHubUsername) > MaxGitHubUsernameLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "GitHub username is too long."})
-	}
-	if len(req.ModelName) > MaxModelNameLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Model name is too long."})
-	}
+		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(wrapped, r)
 
-	// Map the request to the AppInput for the workflow
-	width, err := strconv.Atoi(os.Getenv("IMAGE_WIDTH"))
-	if err != nil {
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
-	height, err := strconv.Atoi(os.Getenv("IMAGE_HEIGHT"))
-	if err != nil {
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
-	input := AppInput{
-		GitHubUsername:                req.GitHubUsername,
-		ModelName:                     req.ModelName,
-		ResearchAgentSystemPrompt:     getEnvB64("RESEARCH_AGENT_SYSTEM_PROMPT"),
-		ContentGenerationSystemPrompt: getEnvB64("CONTENT_GENERATION_SYSTEM_PROMPT"),
-		StorageProvider:               os.Getenv("STORAGE_PROVIDER"),
-		StorageBucket:                 os.Getenv("STORAGE_BUCKET"),
-		ImageFormat:                   os.Getenv("IMAGE_FORMAT"),
-		ImageWidth:                    width,
-		ImageHeight:                   height,
-	}
+		duration := time.Since(start)
+		level := slog.LevelDebug
+		if wrapped.statusCode >= 500 {
+			level = slog.LevelError
+		} else if wrapped.statusCode >= 400 {
+			level = slog.LevelInfo
+		}
 
-	if input.ModelName == "" {
-		input.ModelName = os.Getenv("GEMINI_MODEL")
-	}
-
-	_, err = StartWorkflow(s.temporalClient, input)
-	if err != nil {
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
-
-	c.Response().Header().Set("HX-Redirect", "/profile/"+req.GitHubUsername)
-	return c.NoContent(http.StatusOK)
-}
-
-// GetWorkflowStatus handles GET /workflow/:id/status
-func (s *APIServer) GetWorkflowStatus(c echo.Context) error {
-	workflowID := c.Param("id")
-	if len(workflowID) > MaxWorkflowIDLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Invalid workflow ID."})
-	}
-	c.Logger().Debugf("Checking status for workflow ID: %s", workflowID)
-
-	state, err := QueryWorkflowState(s.temporalClient, workflowID)
-	if err != nil {
-		c.Logger().Errorf("Error getting workflow result for ID %s: %v", workflowID, err)
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
-	c.Logger().Debugf("Successfully retrieved status for workflow ID %s", workflowID)
-
-	if state.Completed {
-		c.Response().Header().Set("HX-Retarget", "#workflow-status")
-	}
-
-	return c.Render(http.StatusOK, "workflow-details", state)
-}
-
-// SetupRoutes sets up the API routes
-func (s *APIServer) SetupRoutes() *echo.Echo {
-	e := echo.New()
-	e.Logger.SetLevel(log.DEBUG)
-
-	e.HTTPErrorHandler = customHTTPErrorHandler
-
-	// Serve static files
-	e.GET("/static/*", echo.WrapHandler(http.FileServer(http.FS(staticFS))))
-
-	// Middleware
-	e.Use(requestLogger)
-	e.Use(middleware.Recover())
-
-	// Setup template engine
-	e.Renderer = createMyRender()
-
-	// Home page
-	e.GET("/", s.HomePage)
-	e.GET("/ping", s.Ping)
-
-	// Workflow routes
-	e.POST("/generate", s.StartContentGeneration)
-	e.GET("/generate-form", s.GetGenerateForm)
-	e.GET("/workflow/:id/status", s.GetWorkflowStatus)
-	e.GET("/workflow/:id", s.GetWorkflowDetails)
-	e.GET("/profile/:username", s.GetProfilePage)
-
-	// Poll routes
-	e.GET("/poll/new", s.ShowPollForm)
-	e.POST("/poll", s.CreatePoll)
-	e.GET("/poll/:id", s.GetPollDetails)
-	e.GET("/poll/:id/results", s.GetPollResults)
-	e.POST("/poll/:id/vote", s.VoteOnPoll)
-	e.DELETE("/poll/:id", s.DeletePoll)
-	e.GET("/poll/:id/profile/:option", s.GetPollProfile)
-	e.GET("/poll/:id/votes/:option", s.GetPollVotes)
-
-	// Visualization routes
-	e.GET("/visualization-form", s.GetVisualizationForm)
-
-	return e
-}
-
-// GetVisualizationForm renders the visualization form partial.
-func (s *APIServer) GetVisualizationForm(c echo.Context) error {
-	return c.Render(http.StatusOK, "visualization-form", nil)
-}
-
-// GetGenerateForm renders the meme generation form.
-func (s *APIServer) GetGenerateForm(c echo.Context) error {
-	return c.Render(http.StatusOK, "generate-form", nil)
-}
-
-// ShowPollForm renders the poll creation form.
-func (s *APIServer) ShowPollForm(c echo.Context) error {
-	return c.Render(http.StatusOK, "poll-form", echo.Map{
-		"Title": "Create a New Poll",
+		s.logger.Log(r.Context(), level, "http response",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", wrapped.statusCode,
+			"duration_ms", duration.Milliseconds(),
+		)
 	})
 }
 
-// CreatePoll handles the creation of a new poll workflow.
-func (s *APIServer) CreatePoll(c echo.Context) error {
-	pollRequest := c.FormValue("poll_request")
-	if pollRequest == "" {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Poll request cannot be empty"})
-	}
-	if len(pollRequest) > MaxPollRequestLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": fmt.Sprintf("Poll request is too long. Please limit to %d characters.", MaxPollRequestLength)})
-	}
+// responseWriter wraps http.ResponseWriter to capture the status code.
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
 
-	// Use the LLM to parse the poll request.
-	parsedRequest, err := ParsePollRequestWithLLM(
-		c.Request().Context(),
-		OpenAIConfig{
-			APIKey:  os.Getenv("RESEARCH_ORCHESTRATOR_LLM_API_KEY"),
-			Model:   os.Getenv("RESEARCH_ORCHESTRATOR_LLM_MODEL"),
-			APIHost: os.Getenv("RESEARCH_ORCHESTRATOR_LLM_BASE_URL"),
-		},
-		pollRequest,
-	)
-	if err != nil {
-		c.Logger().Errorf("Failed to parse poll request: %v", err)
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": "Failed to parse poll request: " + err.Error()})
-	}
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
 
-	// All polls run for one week.
-	duration := 604800 // 7 * 24 * 60 * 60
+// corsMiddleware adds CORS headers to all responses.
+func (s *APIServer) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-	config := PollConfig{
-		Question:        parsedRequest.Question,
-		AllowedOptions:  parsedRequest.Usernames,
-		DurationSeconds: duration,
-		SingleVote:      false,
-		StartBlocked:    false,
-	}
-
-	// Generate a unique ID for the workflow from the poll question.
-	workflowID := "poll-" + sanitizeWorkflowID(parsedRequest.Question)
-
-	_, err = StartPollWorkflow(s.temporalClient, workflowID, config)
-	if err != nil {
-		// If the workflow already exists, it's not an error.
-		// We just redirect to the existing poll.
-		var workflowExistsErr *serviceerror.WorkflowExecutionAlreadyStarted
-		if errors.As(err, &workflowExistsErr) {
-			c.Response().Header().Set("HX-Redirect", "/poll/"+workflowID)
-			return c.NoContent(http.StatusOK)
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
 
-		// For any other error, return a 500.
-		c.Logger().Errorf("Failed to start poll workflow: %v", err)
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
+		next.ServeHTTP(w, r)
+	})
+}
 
-	c.Logger().Infof("Successfully started poll workflow %s", workflowID)
-	// Get a list of all users who already have generated content.
-	existingCreators, err := s.storageProvider.ListTopLevelFolders(c.Request().Context(), os.Getenv("STORAGE_BUCKET"))
-	if err != nil {
-		// Log the error but don't block poll creation, as this is a non-critical optimization.
-		c.Logger().Errorf("Failed to list existing creators: %v", err)
-		existingCreators = []string{} // Proceed with an empty list
-	}
+// recoveryMiddleware recovers from panics and logs them.
+func (s *APIServer) recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				s.logger.Error("panic recovered",
+					"error", err,
+					"path", r.URL.Path,
+					"stack", string(debug.Stack()),
+				)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+		}()
 
-	// Create a set for quick lookups.
-	existingCreatorsSet := make(map[string]struct{})
-	for _, creator := range existingCreators {
-		existingCreatorsSet[creator] = struct{}{}
-	}
+		next.ServeHTTP(w, r)
+	})
+}
 
-	// Correctly separate users who need image generation from those who have existing images.
-	filteredUsernames := []string{} // Users for whom we will generate new images.
-	existingUsernames := []string{} // Users whose existing images we will copy.
-	for _, username := range parsedRequest.Usernames {
-		if _, exists := existingCreatorsSet[username]; !exists {
-			filteredUsernames = append(filteredUsernames, username)
-		} else {
-			existingUsernames = append(existingUsernames, username)
+// Response helper methods
+
+// writeJSON writes a JSON response with the given status code.
+func (s *APIServer) writeJSON(w http.ResponseWriter, data interface{}, statusCode int) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	return json.NewEncoder(w).Encode(data)
+}
+
+// renderError renders an error template with the given message and status code.
+func (s *APIServer) renderError(w http.ResponseWriter, r *http.Request, message string, statusCode int) {
+	data := map[string]interface{}{
+		"error": message,
+	}
+	w.WriteHeader(statusCode)
+	if err := s.renderer.RenderWithRequest(w, r, "error", data); err != nil {
+		s.logger.Error("failed to render error template", "error", err)
+		http.Error(w, message, statusCode)
+	}
+}
+
+// renderErrorWithRedirect renders an error template with a redirect.
+func (s *APIServer) renderErrorWithRedirect(w http.ResponseWriter, r *http.Request, message, redirectURL string, timeout int, statusCode int) {
+	data := map[string]interface{}{
+		"error":           message,
+		"RedirectURL":     redirectURL,
+		"RedirectTimeout": timeout,
+	}
+	w.WriteHeader(statusCode)
+	if err := s.renderer.RenderWithRequest(w, r, "error", data); err != nil {
+		s.logger.Error("failed to render error template", "error", err)
+		http.Error(w, message, statusCode)
+	}
+}
+
+// Handler functions
+
+// handleHomePage renders the home page.
+func (s *APIServer) handleHomePage() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Handle 404 for non-root paths
+		if r.URL.Path != "/" {
+			s.renderErrorWithRedirect(w, r, "Page not found. You will be redirected to the homepage.", "/", 5, http.StatusNotFound)
+			return
 		}
-	}
 
-	// Log the operation summary
-	if len(existingUsernames) > 0 {
-		c.Logger().Infof("Copying existing images for %d users: %v", len(existingUsernames), existingUsernames)
-	}
+		data := map[string]interface{}{
+			"Title": "Vibe Check",
+		}
+		if err := s.renderer.RenderWithRequest(w, r, "index", data); err != nil {
+			s.logger.Error("failed to render template", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	})
+}
 
-	// For users who already have images, copy their latest image to the poll's folder in the background.
-	for _, username := range existingUsernames {
-		go func(user string) {
-			bucket := os.Getenv("STORAGE_BUCKET")
+// handlePing is a simple health check endpoint.
+func (s *APIServer) handlePing() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("pong"))
+	})
+}
 
-			// 1. Find the latest existing object for the user.
-			// Use context.Background() because the request context will be canceled.
-			latestKey, err := s.storageProvider.GetLatestObjectKeyForUser(context.Background(), bucket, user)
-			if err != nil {
-				log.Printf("Failed to find latest image for user %s: %v", user, err)
-				return // Skip copying for this user
-			}
+// handleGetGenerateForm renders the meme generation form.
+func (s *APIServer) handleGetGenerateForm() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := s.renderer.RenderWithRequest(w, r, "generate-form", nil); err != nil {
+			s.logger.Error("failed to render template", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	})
+}
 
-			// 2. Construct the new destination key inside the poll's folder.
-			parts := strings.Split(latestKey, "/")
-			filename := parts[len(parts)-1]
-			fileExt := strings.TrimPrefix(path.Ext(filename), ".")
-			dstKey := fmt.Sprintf("%s/%s.%s", workflowID, user, fileExt)
+// handleGetVisualizationForm renders the visualization form partial.
+func (s *APIServer) handleGetVisualizationForm() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := s.renderer.RenderWithRequest(w, r, "visualization-form", nil); err != nil {
+			s.logger.Error("failed to render template", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	})
+}
 
-			// 3. Perform the copy operation.
-			err = s.storageProvider.Copy(context.Background(), bucket, latestKey, bucket, dstKey)
-			if err != nil {
-				log.Printf("Failed to copy image for user %s to poll folder: %v", user, err)
-			} else {
-				log.Printf("Successfully copied existing image for user %s to poll folder", user)
-			}
-		}(username)
-	}
+// handleStartContentGeneration handles POST /generate
+func (s *APIServer) handleStartContentGeneration() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			s.renderError(w, r, err.Error(), http.StatusBadRequest)
+			return
+		}
 
-	// After the poll is created, kick off the content generation workflows for each new user.
-	if len(filteredUsernames) > 0 {
-		c.Logger().Infof("Starting image generation for %d new users: %v", len(filteredUsernames), filteredUsernames)
+		githubUsername := r.FormValue("github_username")
+		modelName := r.FormValue("model_name")
 
-		width, _ := strconv.Atoi(os.Getenv("IMAGE_WIDTH"))
-		height, _ := strconv.Atoi(os.Getenv("IMAGE_HEIGHT"))
-		baseInput := AppInput{
-			ModelName:                     os.Getenv("GEMINI_MODEL"),
+		if len(githubUsername) > MaxGitHubUsernameLength {
+			s.renderError(w, r, "GitHub username is too long.", http.StatusBadRequest)
+			return
+		}
+		if len(modelName) > MaxModelNameLength {
+			s.renderError(w, r, "Model name is too long.", http.StatusBadRequest)
+			return
+		}
+
+		width, err := strconv.Atoi(os.Getenv("IMAGE_WIDTH"))
+		if err != nil {
+			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		height, err := strconv.Atoi(os.Getenv("IMAGE_HEIGHT"))
+		if err != nil {
+			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		input := AppInput{
+			GitHubUsername:                githubUsername,
+			ModelName:                     modelName,
 			ResearchAgentSystemPrompt:     getEnvB64("RESEARCH_AGENT_SYSTEM_PROMPT"),
 			ContentGenerationSystemPrompt: getEnvB64("CONTENT_GENERATION_SYSTEM_PROMPT"),
 			StorageProvider:               os.Getenv("STORAGE_PROVIDER"),
@@ -418,377 +463,586 @@ func (s *APIServer) CreatePoll(c echo.Context) error {
 			ImageHeight:                   height,
 		}
 
-		workflowInput := PollImageGenerationInput{
-			Usernames: filteredUsernames,
-			PollID:    workflowID,
-			AppInput:  baseInput,
+		if input.ModelName == "" {
+			input.ModelName = os.Getenv("GEMINI_MODEL")
 		}
 
-		// We start this workflow and forget about it. It runs in the background.
-		// A unique ID prevents multiple image generation workflows for the same poll.
-		imageGenWorkflowID := "poll-image-generation-" + workflowID
-		go func() {
-			_, err := StartPollImageGenerationWorkflow(s.temporalClient, imageGenWorkflowID, workflowInput)
-			if err != nil {
-				log.Printf("Failed to start poll image generation workflow %s: %v", imageGenWorkflowID, err)
-			} else {
-				log.Printf("Successfully started poll image generation workflow %s", imageGenWorkflowID)
-			}
-		}()
-	}
-
-	c.Response().Header().Set("HX-Redirect", "/poll/"+workflowID)
-	return c.NoContent(http.StatusOK)
-}
-
-// GetPollDetails renders the details page for a specific poll.
-func (s *APIServer) GetPollDetails(c echo.Context) error {
-	workflowID := c.Param("id")
-	if len(workflowID) > MaxWorkflowIDLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Invalid poll ID."})
-	}
-
-	config, err := QueryPollWorkflow[PollConfig](s.temporalClient, workflowID, "get_config")
-	if err != nil {
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
-
-	options, err := QueryPollWorkflow[[]string](s.temporalClient, workflowID, "get_options")
-	if err != nil {
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
-
-	// Query poll state to check payment status
-	state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
-	if err != nil {
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
-
-	// Generate payment QR code if payment is required but not paid
-	var paymentQRCode string
-	var paymentURL string
-	if config.PaymentRequired && !state.PaymentPaid {
-		// Build Solana payment URL: solana:<recipient>?amount=<amount>&memo=<memo>
-		paymentURL = fmt.Sprintf("solana:%s?amount=%f&memo=%s",
-			url.QueryEscape(config.PaymentWallet),
-			config.PaymentAmount,
-			url.QueryEscape(workflowID))
-
-		// Generate QR code as PNG bytes
-		qrPNG, err := qrcode.Encode(paymentURL, qrcode.Medium, 256)
+		_, err = StartWorkflow(s.temporalClient, input)
 		if err != nil {
-			c.Logger().Errorf("Failed to generate QR code: %v", err)
-		} else {
-			// Encode as base64 for embedding in HTML
-			paymentQRCode = base64.StdEncoding.EncodeToString(qrPNG)
+			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			return
 		}
-	}
 
-	// Fetch image URLs for each poll option.
-	return c.Render(http.StatusOK, "poll-details", echo.Map{
-		"Title":          "Poll Details",
-		"WorkflowID":     workflowID,
-		"Config":         config,
-		"Options":        options,
-		"PaymentPaid":    state.PaymentPaid,
-		"PaymentQRCode":  paymentQRCode,
-		"PaymentURL":     paymentURL,
-		"PaymentTxnID":   state.PaymentTxnID,
+		w.Header().Set("HX-Redirect", "/profile/"+githubUsername)
+		w.WriteHeader(http.StatusOK)
 	})
 }
 
-// GetPollResults renders the results partial for a specific poll.
-func (s *APIServer) GetPollResults(c echo.Context) error {
-	workflowID := c.Param("id")
-	if len(workflowID) > MaxWorkflowIDLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Invalid poll ID."})
-	}
-
-	options, err := QueryPollWorkflow[[]string](s.temporalClient, workflowID, "get_options")
-	if err != nil {
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
-
-	// HTMX requests expect a partial, so we render the results template directly.
-	return c.Render(http.StatusOK, "poll-results-partial", echo.Map{
-		"WorkflowID": workflowID,
-		"Options":    options,
-	})
-}
-
-// GetPollProfile handles serving the image or spinner for a poll option.
-func (s *APIServer) GetPollProfile(c echo.Context) error {
-	workflowID := c.Param("id")
-	option := c.Param("option")
-
-	if len(workflowID) > MaxWorkflowIDLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Invalid poll ID."})
-	}
-	if len(option) > MaxOptionLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Invalid option."})
-	}
-
-	bucket := os.Getenv("STORAGE_BUCKET")
-	imageFormat := os.Getenv("IMAGE_FORMAT")
-
-	// Construct the expected object key for the poll option's image.
-	key := fmt.Sprintf("%s/%s.%s", workflowID, option, imageFormat)
-
-	// Check if the image exists in storage.
-	imageURL, err := s.storageProvider.Stat(c.Request().Context(), bucket, key)
-	if err != nil {
-		// If the image doesn't exist, return the spinner partial, which will
-		// continue to poll.
-		return c.Render(http.StatusOK, "spinner-partial", echo.Map{
-			"WorkflowID": workflowID,
-			"Option":     option,
-		})
-	}
-
-	// If the image exists, return the image partial, which does NOT have
-	// htmx polling attributes, so polling for this image will stop.
-	return c.Render(http.StatusOK, "image-partial", echo.Map{
-		"ImageURL":   imageURL,
-		"Option":     option,
-		"WorkflowID": workflowID,
-	})
-}
-
-// GetPollVotes handles serving the vote count for a poll option.
-func (s *APIServer) GetPollVotes(c echo.Context) error {
-	workflowID := c.Param("id")
-	option := c.Param("option")
-
-	if len(workflowID) > MaxWorkflowIDLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Invalid poll ID."})
-	}
-	if len(option) > MaxOptionLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Invalid option."})
-	}
-
-	state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
-	if err != nil {
-		// It's possible the workflow is still starting up, so don't treat this
-		// as a hard error. Return a temporary state.
-		return c.Render(http.StatusOK, "votes-partial", echo.Map{
-			"WorkflowID": workflowID,
-			"Option":     option,
-			"Votes":      0,
-		})
-	}
-
-	return c.Render(http.StatusOK, "votes-partial", echo.Map{
-		"WorkflowID": workflowID,
-		"Option":     option,
-		"Votes":      state.Options[option],
-	})
-}
-
-// VoteOnPoll handles a vote submission for a poll.
-func (s *APIServer) VoteOnPoll(c echo.Context) error {
-	workflowID := c.Param("id")
-	if len(workflowID) > MaxWorkflowIDLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Invalid poll ID."})
-	}
-
-	// Get or create a unique voter ID from a cookie.
-	voterCookie, err := c.Cookie("voter_id")
-	var voterID string
-	if err != nil || voterCookie.Value == "" {
-		voterID = uuid.New().String()
-		cookie := &http.Cookie{
-			Name:     "voter_id",
-			Value:    voterID,
-			Expires:  time.Now().Add(365 * 24 * time.Hour), // Expire in one year
-			Path:     "/",
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
+// handleGetWorkflowStatus handles GET /workflow/{id}/status
+func (s *APIServer) handleGetWorkflowStatus() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		workflowID := r.PathValue("id")
+		if len(workflowID) > MaxWorkflowIDLength {
+			s.renderError(w, r, "Invalid workflow ID.", http.StatusBadRequest)
+			return
 		}
-		c.SetCookie(cookie)
-	} else {
-		voterID = voterCookie.Value
-	}
 
-	update := VoteUpdate{
-		UserID: voterID,
-		Option: c.FormValue("option"),
-		Amount: 1, // Each vote counts as 1
-	}
-	if len(update.Option) > MaxOptionLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Invalid option."})
-	}
+		s.logger.Debug("checking status for workflow", "workflow_id", workflowID)
 
-	result, err := UpdatePollWorkflow[VoteUpdateResult](s.temporalClient, workflowID, "vote", update)
-	if err != nil {
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
+		state, err := QueryWorkflowState(s.temporalClient, workflowID)
+		if err != nil {
+			s.logger.Error("error getting workflow result", "workflow_id", workflowID, "error", err)
+			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
-	return c.Render(http.StatusOK, "votes-partial", echo.Map{
-		"WorkflowID": workflowID,
-		"Option":     update.Option,
-		"Votes":      result.TotalVotes,
+		s.logger.Debug("successfully retrieved status", "workflow_id", workflowID)
+
+		if state.Completed {
+			w.Header().Set("HX-Retarget", "#workflow-status")
+		}
+
+		if err := s.renderer.RenderWithRequest(w, r, "workflow-details", state); err != nil {
+			s.logger.Error("failed to render template", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
 	})
 }
 
-// DeletePoll deletes all poll-related objects from storage and terminates associated workflows.
-func (s *APIServer) DeletePoll(c echo.Context) error {
-	pollID := c.Param("id")
-	if len(pollID) > MaxWorkflowIDLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Invalid poll ID."})
-	}
-	bucket := os.Getenv("STORAGE_BUCKET")
+// handleGetWorkflowDetails handles GET /workflow/{id}
+func (s *APIServer) handleGetWorkflowDetails() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		workflowID := r.PathValue("id")
+		if len(workflowID) > MaxWorkflowIDLength {
+			s.renderError(w, r, "Invalid workflow ID.", http.StatusBadRequest)
+			return
+		}
 
-	// Terminate the poll workflow to allow workflow ID reuse
-	err := TerminateWorkflow(s.temporalClient, pollID, "Poll deleted by user")
-	if err != nil {
-		c.Logger().Warnf("Failed to terminate poll workflow %s: %v", pollID, err)
-		// Continue with deletion even if termination fails
-	}
+		s.logger.Debug("getting details for workflow", "workflow_id", workflowID)
 
-	// Terminate the image generation workflow to allow workflow ID reuse
-	imageGenWorkflowID := "poll-image-generation-" + pollID
-	err = TerminateWorkflow(s.temporalClient, imageGenWorkflowID, "Poll deleted by user")
-	if err != nil {
-		c.Logger().Warnf("Failed to terminate image generation workflow %s: %v", imageGenWorkflowID, err)
-		// Continue with deletion even if termination fails
-	}
-
-	// Delete all objects with the poll ID as the prefix
-	err = s.storageProvider.Delete(c.Request().Context(), bucket, pollID+"/")
-	if err != nil {
-		c.Logger().Errorf("Failed to delete poll storage %s: %v", pollID, err)
-		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to delete poll: " + err.Error()})
-	}
-
-	c.Logger().Infof("Successfully deleted poll %s", pollID)
-	return c.JSON(http.StatusOK, echo.Map{"message": "Poll deleted successfully"})
-}
-
-// HomePage renders the home page
-func (s *APIServer) HomePage(c echo.Context) error {
-	return c.Render(http.StatusOK, "index", echo.Map{
-		"Title": "Vibe Check",
-	})
-}
-
-// Ping is a simple health check endpoint
-func (s *APIServer) Ping(c echo.Context) error {
-	return c.String(http.StatusOK, "pong")
-}
-
-// GetWorkflowDetails renders the workflow details page
-func (s *APIServer) GetWorkflowDetails(c echo.Context) error {
-	workflowID := c.Param("id")
-	if len(workflowID) > MaxWorkflowIDLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Invalid workflow ID."})
-	}
-	c.Logger().Debugf("Getting details for workflow ID: %s", workflowID)
-
-	// For the details page, we wait for the final result
-	result, err := GetWorkflowResult(s.temporalClient, workflowID)
-	if err != nil {
-		c.Logger().Errorf("Error getting workflow result for ID %s: %v", workflowID, err)
-		return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
-	}
-
-	state := WorkflowState{
-		Status:    "Completed",
-		Completed: true,
-		Result:    result,
-	}
-
-	c.Logger().Debugf("Successfully retrieved details for workflow ID %s", workflowID)
-	return c.Render(http.StatusOK, "workflow-details", state)
-}
-
-// GetProfilePage renders the profile page with status or result
-func (s *APIServer) GetProfilePage(c echo.Context) error {
-	username := c.Param("username")
-	if len(username) > MaxGitHubUsernameLength {
-		return c.Render(http.StatusBadRequest, "error", echo.Map{"error": "Invalid username."})
-	}
-	workflowID := "content-generation-" + username
-	c.Logger().Debugf("Getting profile page for workflow ID: %s", workflowID)
-
-	desc, err := GetWorkflowDescription(s.temporalClient, workflowID)
-	if err != nil {
-		c.Logger().Debugf("Error getting workflow description for ID %s: %v", workflowID, err)
-		return c.Render(http.StatusNotFound, "error", echo.Map{
-			"error":           "Workflow for this user not found.",
-			"RedirectURL":     "/",
-			"RedirectTimeout": 5,
-		})
-	}
-
-	status := desc.WorkflowExecutionInfo.Status
-	c.Logger().Debugf("Workflow %s status: %s", workflowID, status)
-
-	switch status {
-	case 1: // RUNNING
-		return c.Render(http.StatusOK, "workflow-status", echo.Map{
-			"GitHubUsername": username,
-			"WorkflowID":     workflowID,
-			"Title":          "Profile for " + username,
-		})
-	case 2: // COMPLETED
 		result, err := GetWorkflowResult(s.temporalClient, workflowID)
 		if err != nil {
-			c.Logger().Errorf("Error getting workflow result for ID %s: %v", workflowID, err)
-			return c.Render(http.StatusInternalServerError, "error", echo.Map{"error": err.Error()})
+			s.logger.Error("error getting workflow result", "workflow_id", workflowID, "error", err)
+			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			return
 		}
-		return c.Render(http.StatusOK, "workflow-details", echo.Map{
-			"Title":     "Profile for " + username,
-			"Completed": true,
-			"Status":    "Completed",
-			"Result":    result,
-		})
-	default: // FAILED, CANCELED, TERMINATED, TIMED_OUT, etc.
-		return c.Render(http.StatusNotFound, "error", echo.Map{
-			"error":           "Profile generation for this user did not complete successfully.",
-			"RedirectURL":     "/",
-			"RedirectTimeout": 5,
-		})
-	}
+
+		state := WorkflowState{
+			Status:    "Completed",
+			Completed: true,
+			Result:    result,
+		}
+
+		s.logger.Debug("successfully retrieved details", "workflow_id", workflowID)
+		if err := s.renderer.RenderWithRequest(w, r, "workflow-details", state); err != nil {
+			s.logger.Error("failed to render template", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	})
 }
 
-// customHTTPErrorHandler handles all HTTP errors for the application.
-// It provides a custom 404 page with a redirect.
-func customHTTPErrorHandler(err error, c echo.Context) {
-	code := http.StatusInternalServerError
-	if he, ok := err.(*echo.HTTPError); ok {
-		code = he.Code
-	}
-
-	// For 404 Not Found errors, render a custom page that redirects to home.
-	if code == http.StatusNotFound {
-		c.Logger().Warnf("Handling 404 for %s", c.Request().URL.Path)
-		if err := c.Render(http.StatusNotFound, "error", echo.Map{
-			"error":           "Page not found. You will be redirected to the homepage.",
-			"RedirectURL":     "/",
-			"RedirectTimeout": 5,
-		}); err != nil {
-			c.Logger().Error(err)
+// handleGetProfilePage renders the profile page with status or result
+func (s *APIServer) handleGetProfilePage() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username := r.PathValue("username")
+		if len(username) > MaxGitHubUsernameLength {
+			s.renderError(w, r, "Invalid username.", http.StatusBadRequest)
+			return
 		}
-		return
-	}
 
-	// For all other errors, use the default Echo error handler.
-	c.Echo().DefaultHTTPErrorHandler(err, c)
+		workflowID := "content-generation-" + username
+		s.logger.Debug("getting profile page", "workflow_id", workflowID)
+
+		desc, err := GetWorkflowDescription(s.temporalClient, workflowID)
+		if err != nil {
+			s.logger.Debug("error getting workflow description", "workflow_id", workflowID, "error", err)
+			s.renderErrorWithRedirect(w, r, "Workflow for this user not found.", "/", 5, http.StatusNotFound)
+			return
+		}
+
+		status := desc.WorkflowExecutionInfo.Status
+		s.logger.Debug("workflow status", "workflow_id", workflowID, "status", status)
+
+		switch status {
+		case 1: // RUNNING
+			data := map[string]interface{}{
+				"GitHubUsername": username,
+				"WorkflowID":     workflowID,
+				"Title":          "Profile for " + username,
+			}
+			if err := s.renderer.RenderWithRequest(w, r, "workflow-status", data); err != nil {
+				s.logger.Error("failed to render template", "error", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+		case 2: // COMPLETED
+			result, err := GetWorkflowResult(s.temporalClient, workflowID)
+			if err != nil {
+				s.logger.Error("error getting workflow result", "workflow_id", workflowID, "error", err)
+				s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			data := map[string]interface{}{
+				"Title":     "Profile for " + username,
+				"Completed": true,
+				"Status":    "Completed",
+				"Result":    result,
+			}
+			if err := s.renderer.RenderWithRequest(w, r, "workflow-details", data); err != nil {
+				s.logger.Error("failed to render template", "error", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+		default: // FAILED, CANCELED, TERMINATED, TIMED_OUT, etc.
+			s.renderErrorWithRedirect(w, r, "Profile generation for this user did not complete successfully.", "/", 5, http.StatusNotFound)
+		}
+	})
 }
 
-func sanitizeWorkflowID(input string) string {
-	// Replace non-alphanumeric characters with a hyphen.
-	reg := regexp.MustCompile(`[^a-zA-Z0-9-_]+`)
-	sanitized := reg.ReplaceAllString(input, "-")
+// Poll handlers
 
-	// Trim leading/trailing hyphens that might have been created.
-	sanitized = strings.ToLower(strings.Trim(sanitized, "-"))
+// handleShowPollForm renders the poll creation form.
+func (s *APIServer) handleShowPollForm() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data := map[string]interface{}{
+			"Title": "Create a New Poll",
+		}
+		if err := s.renderer.RenderWithRequest(w, r, "poll-form", data); err != nil {
+			s.logger.Error("failed to render template", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	})
+}
 
-	// Enforce a max length for workflow IDs.
-	const maxLength = 200
-	if len(sanitized) > maxLength {
-		sanitized = sanitized[:maxLength]
-	}
+// handleCreatePoll handles the creation of a new poll workflow.
+func (s *APIServer) handleCreatePoll() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			s.renderError(w, r, err.Error(), http.StatusBadRequest)
+			return
+		}
 
-	return sanitized
+		pollRequest := r.FormValue("poll_request")
+		if pollRequest == "" {
+			s.renderError(w, r, "Poll request cannot be empty", http.StatusBadRequest)
+			return
+		}
+		if len(pollRequest) > MaxPollRequestLength {
+			s.renderError(w, r, fmt.Sprintf("Poll request is too long. Please limit to %d characters.", MaxPollRequestLength), http.StatusBadRequest)
+			return
+		}
+
+		// Use the LLM to parse the poll request.
+		parsedRequest, err := ParsePollRequestWithLLM(
+			r.Context(),
+			OpenAIConfig{
+				APIKey:  os.Getenv("RESEARCH_ORCHESTRATOR_LLM_API_KEY"),
+				Model:   os.Getenv("RESEARCH_ORCHESTRATOR_LLM_MODEL"),
+				APIHost: os.Getenv("RESEARCH_ORCHESTRATOR_LLM_BASE_URL"),
+			},
+			pollRequest,
+		)
+		if err != nil {
+			s.logger.Error("failed to parse poll request", "error", err)
+			s.renderError(w, r, "Failed to parse poll request: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// All polls run for one week.
+		duration := 604800 // 7 * 24 * 60 * 60
+
+		config := PollConfig{
+			Question:        parsedRequest.Question,
+			AllowedOptions:  parsedRequest.Usernames,
+			DurationSeconds: duration,
+			SingleVote:      false,
+			StartBlocked:    false,
+		}
+
+		// Generate a unique ID for the workflow from the poll question.
+		workflowID := "poll-" + sanitizeWorkflowID(parsedRequest.Question)
+
+		_, err = StartPollWorkflow(s.temporalClient, workflowID, config)
+		if err != nil {
+			// If the workflow already exists, it's not an error.
+			var workflowExistsErr *serviceerror.WorkflowExecutionAlreadyStarted
+			if errors.As(err, &workflowExistsErr) {
+				w.Header().Set("HX-Redirect", "/poll/"+workflowID)
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
+			s.logger.Error("failed to start poll workflow", "error", err)
+			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		s.logger.Info("successfully started poll workflow", "workflow_id", workflowID)
+
+		// Get a list of all users who already have generated content.
+		existingCreators, err := s.storageProvider.ListTopLevelFolders(r.Context(), os.Getenv("STORAGE_BUCKET"))
+		if err != nil {
+			s.logger.Error("failed to list existing creators", "error", err)
+			existingCreators = []string{}
+		}
+
+		// Create a set for quick lookups.
+		existingCreatorsSet := make(map[string]struct{})
+		for _, creator := range existingCreators {
+			existingCreatorsSet[creator] = struct{}{}
+		}
+
+		// Separate users who need image generation from those who have existing images.
+		filteredUsernames := []string{}
+		existingUsernames := []string{}
+		for _, username := range parsedRequest.Usernames {
+			if _, exists := existingCreatorsSet[username]; !exists {
+				filteredUsernames = append(filteredUsernames, username)
+			} else {
+				existingUsernames = append(existingUsernames, username)
+			}
+		}
+
+		// Log the operation summary
+		if len(existingUsernames) > 0 {
+			s.logger.Info("copying existing images", "count", len(existingUsernames), "users", existingUsernames)
+		}
+
+		// For users who already have images, copy their latest image to the poll's folder in the background.
+		for _, username := range existingUsernames {
+			go func(user string) {
+				bucket := os.Getenv("STORAGE_BUCKET")
+
+				latestKey, err := s.storageProvider.GetLatestObjectKeyForUser(context.Background(), bucket, user)
+				if err != nil {
+					log.Printf("Failed to find latest image for user %s: %v", user, err)
+					return
+				}
+
+				parts := strings.Split(latestKey, "/")
+				filename := parts[len(parts)-1]
+				fileExt := strings.TrimPrefix(path.Ext(filename), ".")
+				dstKey := fmt.Sprintf("%s/%s.%s", workflowID, user, fileExt)
+
+				err = s.storageProvider.Copy(context.Background(), bucket, latestKey, bucket, dstKey)
+				if err != nil {
+					log.Printf("Failed to copy image for user %s to poll folder: %v", user, err)
+				} else {
+					log.Printf("Successfully copied existing image for user %s to poll folder", user)
+				}
+			}(username)
+		}
+
+		// After the poll is created, kick off the content generation workflows for each new user.
+		if len(filteredUsernames) > 0 {
+			s.logger.Info("starting image generation", "count", len(filteredUsernames), "users", filteredUsernames)
+
+			width, _ := strconv.Atoi(os.Getenv("IMAGE_WIDTH"))
+			height, _ := strconv.Atoi(os.Getenv("IMAGE_HEIGHT"))
+			baseInput := AppInput{
+				ModelName:                     os.Getenv("GEMINI_MODEL"),
+				ResearchAgentSystemPrompt:     getEnvB64("RESEARCH_AGENT_SYSTEM_PROMPT"),
+				ContentGenerationSystemPrompt: getEnvB64("CONTENT_GENERATION_SYSTEM_PROMPT"),
+				StorageProvider:               os.Getenv("STORAGE_PROVIDER"),
+				StorageBucket:                 os.Getenv("STORAGE_BUCKET"),
+				ImageFormat:                   os.Getenv("IMAGE_FORMAT"),
+				ImageWidth:                    width,
+				ImageHeight:                   height,
+			}
+
+			workflowInput := PollImageGenerationInput{
+				Usernames: filteredUsernames,
+				PollID:    workflowID,
+				AppInput:  baseInput,
+			}
+
+			imageGenWorkflowID := "poll-image-generation-" + workflowID
+			go func() {
+				_, err := StartPollImageGenerationWorkflow(s.temporalClient, imageGenWorkflowID, workflowInput)
+				if err != nil {
+					log.Printf("Failed to start poll image generation workflow %s: %v", imageGenWorkflowID, err)
+				} else {
+					log.Printf("Successfully started poll image generation workflow %s", imageGenWorkflowID)
+				}
+			}()
+		}
+
+		w.Header().Set("HX-Redirect", "/poll/"+workflowID)
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+// handleGetPollDetails renders the details page for a specific poll.
+func (s *APIServer) handleGetPollDetails() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		workflowID := r.PathValue("id")
+		if len(workflowID) > MaxWorkflowIDLength {
+			s.renderError(w, r, "Invalid poll ID.", http.StatusBadRequest)
+			return
+		}
+
+		config, err := QueryPollWorkflow[PollConfig](s.temporalClient, workflowID, "get_config")
+		if err != nil {
+			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		options, err := QueryPollWorkflow[[]string](s.temporalClient, workflowID, "get_options")
+		if err != nil {
+			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
+		if err != nil {
+			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Generate payment QR code if payment is required but not paid
+		var paymentQRCode string
+		var paymentURL string
+		if config.PaymentRequired && !state.PaymentPaid {
+			paymentURL = fmt.Sprintf("solana:%s?amount=%f&memo=%s",
+				url.QueryEscape(config.PaymentWallet),
+				config.PaymentAmount,
+				url.QueryEscape(workflowID))
+
+			qrPNG, err := qrcode.Encode(paymentURL, qrcode.Medium, 256)
+			if err != nil {
+				s.logger.Error("failed to generate QR code", "error", err)
+			} else {
+				paymentQRCode = base64.StdEncoding.EncodeToString(qrPNG)
+			}
+		}
+
+		data := map[string]interface{}{
+			"Title":         "Poll Details",
+			"WorkflowID":    workflowID,
+			"Config":        config,
+			"Options":       options,
+			"PaymentPaid":   state.PaymentPaid,
+			"PaymentQRCode": paymentQRCode,
+			"PaymentURL":    paymentURL,
+			"PaymentTxnID":  state.PaymentTxnID,
+		}
+
+		if err := s.renderer.RenderWithRequest(w, r, "poll-details", data); err != nil {
+			s.logger.Error("failed to render template", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	})
+}
+
+// handleGetPollResults renders the results partial for a specific poll.
+func (s *APIServer) handleGetPollResults() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		workflowID := r.PathValue("id")
+		if len(workflowID) > MaxWorkflowIDLength {
+			s.renderError(w, r, "Invalid poll ID.", http.StatusBadRequest)
+			return
+		}
+
+		options, err := QueryPollWorkflow[[]string](s.temporalClient, workflowID, "get_options")
+		if err != nil {
+			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		data := map[string]interface{}{
+			"WorkflowID": workflowID,
+			"Options":    options,
+		}
+
+		if err := s.renderer.RenderWithRequest(w, r, "poll-results-partial", data); err != nil {
+			s.logger.Error("failed to render template", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	})
+}
+
+// handleGetPollProfile handles serving the image or spinner for a poll option.
+func (s *APIServer) handleGetPollProfile() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		workflowID := r.PathValue("id")
+		option := r.PathValue("option")
+
+		if len(workflowID) > MaxWorkflowIDLength {
+			s.renderError(w, r, "Invalid poll ID.", http.StatusBadRequest)
+			return
+		}
+		if len(option) > MaxOptionLength {
+			s.renderError(w, r, "Invalid option.", http.StatusBadRequest)
+			return
+		}
+
+		bucket := os.Getenv("STORAGE_BUCKET")
+		imageFormat := os.Getenv("IMAGE_FORMAT")
+
+		key := fmt.Sprintf("%s/%s.%s", workflowID, option, imageFormat)
+
+		imageURL, err := s.storageProvider.Stat(r.Context(), bucket, key)
+		if err != nil {
+			// If the image doesn't exist, return the spinner partial
+			data := map[string]interface{}{
+				"WorkflowID": workflowID,
+				"Option":     option,
+			}
+			if err := s.renderer.RenderWithRequest(w, r, "spinner-partial", data); err != nil {
+				s.logger.Error("failed to render template", "error", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+			return
+		}
+
+		// If the image exists, return the image partial
+		data := map[string]interface{}{
+			"ImageURL":   imageURL,
+			"Option":     option,
+			"WorkflowID": workflowID,
+		}
+		if err := s.renderer.RenderWithRequest(w, r, "image-partial", data); err != nil {
+			s.logger.Error("failed to render template", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	})
+}
+
+// handleGetPollVotes handles serving the vote count for a poll option.
+func (s *APIServer) handleGetPollVotes() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		workflowID := r.PathValue("id")
+		option := r.PathValue("option")
+
+		if len(workflowID) > MaxWorkflowIDLength {
+			s.renderError(w, r, "Invalid poll ID.", http.StatusBadRequest)
+			return
+		}
+		if len(option) > MaxOptionLength {
+			s.renderError(w, r, "Invalid option.", http.StatusBadRequest)
+			return
+		}
+
+		state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
+		if err != nil {
+			// If workflow is still starting up, return temporary state
+			data := map[string]interface{}{
+				"WorkflowID": workflowID,
+				"Option":     option,
+				"Votes":      0,
+			}
+			if err := s.renderer.RenderWithRequest(w, r, "votes-partial", data); err != nil {
+				s.logger.Error("failed to render template", "error", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+			return
+		}
+
+		data := map[string]interface{}{
+			"WorkflowID": workflowID,
+			"Option":     option,
+			"Votes":      state.Options[option],
+		}
+
+		if err := s.renderer.RenderWithRequest(w, r, "votes-partial", data); err != nil {
+			s.logger.Error("failed to render template", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	})
+}
+
+// handleVoteOnPoll handles a vote submission for a poll.
+func (s *APIServer) handleVoteOnPoll() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		workflowID := r.PathValue("id")
+		if len(workflowID) > MaxWorkflowIDLength {
+			s.renderError(w, r, "Invalid poll ID.", http.StatusBadRequest)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			s.renderError(w, r, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// Get or create a unique voter ID from a cookie
+		voterCookie, err := r.Cookie("voter_id")
+		var voterID string
+		if err != nil || voterCookie.Value == "" {
+			voterID = uuid.New().String()
+			cookie := &http.Cookie{
+				Name:     "voter_id",
+				Value:    voterID,
+				Expires:  time.Now().Add(365 * 24 * time.Hour),
+				Path:     "/",
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			}
+			http.SetCookie(w, cookie)
+		} else {
+			voterID = voterCookie.Value
+		}
+
+		update := VoteUpdate{
+			UserID: voterID,
+			Option: r.FormValue("option"),
+			Amount: 1,
+		}
+		if len(update.Option) > MaxOptionLength {
+			s.renderError(w, r, "Invalid option.", http.StatusBadRequest)
+			return
+		}
+
+		result, err := UpdatePollWorkflow[VoteUpdateResult](s.temporalClient, workflowID, "vote", update)
+		if err != nil {
+			s.renderError(w, r, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		data := map[string]interface{}{
+			"WorkflowID": workflowID,
+			"Option":     update.Option,
+			"Votes":      result.TotalVotes,
+		}
+
+		if err := s.renderer.RenderWithRequest(w, r, "votes-partial", data); err != nil {
+			s.logger.Error("failed to render template", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	})
+}
+
+// handleDeletePoll deletes all poll-related objects from storage and terminates associated workflows.
+func (s *APIServer) handleDeletePoll() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pollID := r.PathValue("id")
+		if len(pollID) > MaxWorkflowIDLength {
+			s.writeJSON(w, map[string]string{"error": "Invalid poll ID."}, http.StatusBadRequest)
+			return
+		}
+
+		bucket := os.Getenv("STORAGE_BUCKET")
+
+		// Terminate the poll workflow
+		err := TerminateWorkflow(s.temporalClient, pollID, "Poll deleted by user")
+		if err != nil {
+			s.logger.Warn("failed to terminate poll workflow", "poll_id", pollID, "error", err)
+		}
+
+		// Terminate the image generation workflow
+		imageGenWorkflowID := "poll-image-generation-" + pollID
+		err = TerminateWorkflow(s.temporalClient, imageGenWorkflowID, "Poll deleted by user")
+		if err != nil {
+			s.logger.Warn("failed to terminate image generation workflow", "workflow_id", imageGenWorkflowID, "error", err)
+		}
+
+		// Delete all objects with the poll ID as the prefix
+		err = s.storageProvider.Delete(r.Context(), bucket, pollID+"/")
+		if err != nil {
+			s.logger.Error("failed to delete poll storage", "poll_id", pollID, "error", err)
+			s.writeJSON(w, map[string]string{"error": "Failed to delete poll: " + err.Error()}, http.StatusInternalServerError)
+			return
+		}
+
+		s.logger.Info("successfully deleted poll", "poll_id", pollID)
+		s.writeJSON(w, map[string]string{"message": "Poll deleted successfully"}, http.StatusOK)
+	})
 }

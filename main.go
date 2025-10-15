@@ -141,7 +141,7 @@ func runServer(ctx context.Context, stop context.CancelFunc, wg *sync.WaitGroup)
 	apiServer := NewAPIServer(c, storage)
 
 	// Setup routes
-	router := apiServer.SetupRoutes()
+	apiServer = apiServer.SetupRoutes()
 
 	// Start server
 	port := os.Getenv("PORT")
@@ -149,7 +149,7 @@ func runServer(ctx context.Context, stop context.CancelFunc, wg *sync.WaitGroup)
 	// Start server in a goroutine
 	go func() {
 		stdlog.Printf("Starting server on port %s", port)
-		if err := router.Start(":" + port); err != nil && err != http.ErrServerClosed {
+		if err := apiServer.Start(":" + port); err != nil && err != http.ErrServerClosed {
 			stdlog.Fatalf("listen: %s\n", err)
 		}
 	}()
@@ -161,11 +161,11 @@ func runServer(ctx context.Context, stop context.CancelFunc, wg *sync.WaitGroup)
 	stop()
 	stdlog.Println("Shutting down gracefully, press Ctrl+C again to force")
 
-	// The context is used to inform the server it has 5 seconds to finish
+	// The context is used to inform the server it has 30 seconds to finish
 	// the requests it is currently handling
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := router.Shutdown(shutdownCtx); err != nil {
+	if err := apiServer.Shutdown(shutdownCtx); err != nil {
 		stdlog.Fatalf("Server forced to shutdown: %v", err)
 	}
 
