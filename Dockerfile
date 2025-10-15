@@ -1,5 +1,5 @@
 # Use the official Golang image as a builder
-FROM golang:1.25.0-alpine AS builder
+FROM golang:1.25.1-alpine AS builder
 
 # Install build tools and libwebp for CGO
 RUN apk --no-cache add build-base git libwebp-dev
