@@ -698,12 +698,25 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 		// All polls run for one week.
 		duration := 604800 // 7 * 24 * 60 * 60
 
+		// Parse payment configuration
+		paymentWallet := os.Getenv("PAYMENT_WALLET_ADDRESS")
+		paymentAmount := 0.01 // default
+		if envAmount := os.Getenv("PAYMENT_AMOUNT"); envAmount != "" {
+			if parsed, err := strconv.ParseFloat(envAmount, 64); err == nil {
+				paymentAmount = parsed
+			}
+		}
+
 		config := PollConfig{
 			Question:        parsedRequest.Question,
 			AllowedOptions:  parsedRequest.Usernames,
 			DurationSeconds: duration,
 			SingleVote:      false,
 			StartBlocked:    false,
+			// Payment configuration
+			PaymentRequired: paymentWallet != "", // Only require payment if wallet is configured
+			PaymentWallet:   paymentWallet,
+			PaymentAmount:   paymentAmount,
 		}
 
 		// Generate a unique ID for the workflow from the poll question.
