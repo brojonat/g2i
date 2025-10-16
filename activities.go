@@ -306,6 +306,7 @@ func WaitForPayment(ctx context.Context, input WaitForPaymentInput) (WaitForPaym
 	logger.Info("Waiting for payment", "wallet", input.PaymentWallet, "workflowID", input.WorkflowID)
 
 	// Create forohtoo client
+	fmt.Println("Creating forohtoo client", "url", input.ForohtooServerURL)
 	cl := client.NewClient(input.ForohtooServerURL, nil, slog.Default())
 
 	// start tracking the wallet

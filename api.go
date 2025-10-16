@@ -720,7 +720,7 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 		}
 
 		// Generate a unique ID for the workflow from the poll question.
-		workflowID := "poll-" + sanitizeWorkflowID(parsedRequest.Question)
+		workflowID := "g2i-poll-" + sanitizeWorkflowID(parsedRequest.Question)
 
 		_, err = StartPollWorkflow(s.temporalClient, workflowID, config)
 		if err != nil {
@@ -816,7 +816,7 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 				AppInput:  baseInput,
 			}
 
-			imageGenWorkflowID := "poll-image-generation-" + workflowID
+			imageGenWorkflowID := "g2i-poll-image-generation-" + workflowID
 			go func() {
 				_, err := StartPollImageGenerationWorkflow(s.temporalClient, imageGenWorkflowID, workflowInput)
 				if err != nil {
@@ -1098,7 +1098,7 @@ func (s *APIServer) handleDeletePoll() http.Handler {
 		}
 
 		// Terminate the image generation workflow
-		imageGenWorkflowID := "poll-image-generation-" + pollID
+		imageGenWorkflowID := "g2i-poll-image-generation-" + pollID
 		err = TerminateWorkflow(s.temporalClient, imageGenWorkflowID, "Poll deleted by user")
 		if err != nil {
 			s.logger.Warn("failed to terminate image generation workflow", "workflow_id", imageGenWorkflowID, "error", err)

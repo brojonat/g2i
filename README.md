@@ -1,5 +1,10 @@
 # GitHub-to-Image-to-Invitational-Poll
 
+TODO: add teardown function to workflows that will delete the poll folder and all its contents.
+TODO: on submission of a poll, we should immediately move to the next page, and if payment is required, we should only show the solana qr code, we don't need to show the image statuses or the votes.
+TODO: only return active polls to the list page.
+TODO: only return polls that are in that environment to the list page (we probably need to namespace or task-queue specific to the environment).
+
 A Temporal-based service that aggregates GitHub profiles and generates representational content anchored in modern cultural context. Perfect for candidate screening, developer showcases, or cultural representation projects.
 
 ## Overview

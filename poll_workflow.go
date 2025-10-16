@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"time"
 
@@ -160,14 +161,8 @@ func PollWorkflow(ctx workflow.Context, config PollConfig) (PollSummary, error) 
 		var paymentOutput WaitForPaymentOutput
 		workflowID := workflow.GetInfo(ctx).WorkflowExecution.ID
 
-		// Get forohtoo server URL from workflow environment (passed in from server)
-		forohtooURL := "http://localhost:8000" // Default fallback
-		if config.PaymentWallet != "" {
-			forohtooURL = "http://localhost:8000" // This will be passed via config in the future
-		}
-
 		paymentInput := WaitForPaymentInput{
-			ForohtooServerURL: forohtooURL,
+			ForohtooServerURL: os.Getenv("FOROHTOO_SERVER_URL"),
 			PaymentWallet:     config.PaymentWallet,
 			WorkflowID:        workflowID,
 			ExpectedAmount:    config.PaymentAmount,

@@ -6,8 +6,8 @@ cloud.google.com/go/auth v0.9.3/go.mod h1:7z6VY+7h3KUdRov5F1i8NDP5ZzWKYmEPO842Bg
 cloud.google.com/go/compute/metadata v0.7.0 h1:PBWF+iiAerVNe8UCHxdOt6eHLVc3ydFeOCw78U8ytSU=
 cloud.google.com/go/compute/metadata v0.7.0/go.mod h1:j5MvL9PprKL39t166CoB1uVHfQMs4tFQZZcKwksXUjo=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/brojonat/forohtoo v0.0.0-20251015024504-db0297e14606 h1:4O08m4A2Pr47QTfOgVxnUoPiDi7qNmegyBITbuOoLTU=
-github.com/brojonat/forohtoo v0.0.0-20251015024504-db0297e14606/go.mod h1:TG9cfmjMcuo8mme0vM/MYk9DZBL1IkT1c0Ivu8y4kq4=
+github.com/brojonat/forohtoo v0.0.0-20251016033305-368e2111a28c h1:owOaj//Bz184Qh9Px1u93yjB4zFBSeVeQeTVd5r9EQw=
+github.com/brojonat/forohtoo v0.0.0-20251016033305-368e2111a28c/go.mod h1:TG9cfmjMcuo8mme0vM/MYk9DZBL1IkT1c0Ivu8y4kq4=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
 github.com/chai2010/webp v1.4.0 h1:6DA2pkkRUPnbOHvvsmGI3He1hBKf/bkRlniAiSGuEko=
 github.com/chai2010/webp v1.4.0/go.mod h1:0XVwvZWdjjdxpUEIf7b9g9VkHFnInUSYujwqTLEuldU=
