@@ -1126,7 +1126,8 @@ func (s *APIServer) handleListPolls() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.logger.Debug("listing all polls")
 
-		polls, err := ListPollWorkflows(s.temporalClient, 100)
+		// Limit to 20 most recent polls to avoid timeout
+		polls, err := ListPollWorkflows(s.temporalClient, 20)
 		if err != nil {
 			s.logger.Error("failed to list polls", "error", err)
 			s.writeInternalError(w, r, "Failed to list polls: "+err.Error())

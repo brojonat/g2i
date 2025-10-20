@@ -96,8 +96,13 @@ func StartPollImageGenerationWorkflow(c client.Client, workflowID string, input 
 
 // QueryPollWorkflow queries a running poll workflow.
 func QueryPollWorkflow[T any](c client.Client, workflowID string, queryType string) (T, error) {
+	return QueryPollWorkflowWithContext[T](context.Background(), c, workflowID, queryType)
+}
+
+// QueryPollWorkflowWithContext queries a poll workflow with a custom context (for timeouts).
+func QueryPollWorkflowWithContext[T any](ctx context.Context, c client.Client, workflowID string, queryType string) (T, error) {
 	var result T
-	resp, err := c.QueryWorkflow(context.Background(), workflowID, "", queryType)
+	resp, err := c.QueryWorkflow(ctx, workflowID, "", queryType)
 	if err != nil {
 		return result, fmt.Errorf("failed to query workflow: %w", err)
 	}
@@ -207,54 +212,53 @@ type PollListItem struct {
 
 // ListPollWorkflows lists all poll workflows
 func ListPollWorkflows(c client.Client, pageSize int) ([]PollListItem, error) {
-	ctx := context.Background()
+	// Add timeout to prevent slow queries from blocking indefinitely
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	// Query for workflows with PollWorkflow type
-	query := "WorkflowType='PollWorkflow'"
+	// Query for RUNNING poll workflows only, sorted by start time descending (most recent first)
+	query := "WorkflowType='PollWorkflow' AND ExecutionStatus='Running' ORDER BY StartTime DESC"
 
 	var polls []PollListItem
-	var nextPageToken []byte
 
-	for {
-		resp, err := c.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
-			PageSize:      int32(pageSize),
-			NextPageToken: nextPageToken,
-			Query:         query,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to list workflows: %w", err)
+	// Only fetch the first page to avoid querying too many workflows
+	resp, err := c.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
+		PageSize: int32(pageSize),
+		Query:    query,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workflows: %w", err)
+	}
+
+	for _, exec := range resp.Executions {
+		poll := PollListItem{
+			WorkflowID: exec.Execution.WorkflowId,
+			StartTime:  exec.StartTime.AsTime(),
+			Status:     exec.Status.String(),
 		}
 
-		for _, exec := range resp.Executions {
-			poll := PollListItem{
-				WorkflowID: exec.Execution.WorkflowId,
-				StartTime:  exec.StartTime.AsTime(),
-				Status:     exec.Status.String(),
-			}
-
-			// Try to query the poll for its config to get the question and vote count
-			config, err := QueryPollWorkflow[PollConfig](c, poll.WorkflowID, "get_config")
-			if err == nil {
-				poll.Question = config.Question
-			}
-
-			state, err := QueryPollWorkflow[PollState](c, poll.WorkflowID, "get_state")
-			if err == nil {
-				// Count total votes
-				totalVotes := 0
-				for _, count := range state.Options {
-					totalVotes += count
-				}
-				poll.VoteCount = totalVotes
-			}
-
-			polls = append(polls, poll)
+		// Try to query the poll for its config to get the question and vote count
+		// Use short timeout for each query
+		queryCtx, queryCancel := context.WithTimeout(ctx, 2*time.Second)
+		config, err := QueryPollWorkflowWithContext[PollConfig](queryCtx, c, poll.WorkflowID, "get_config")
+		queryCancel()
+		if err == nil {
+			poll.Question = config.Question
 		}
 
-		nextPageToken = resp.NextPageToken
-		if len(nextPageToken) == 0 {
-			break
+		queryCtx, queryCancel = context.WithTimeout(ctx, 2*time.Second)
+		state, err := QueryPollWorkflowWithContext[PollState](queryCtx, c, poll.WorkflowID, "get_state")
+		queryCancel()
+		if err == nil {
+			// Count total votes
+			totalVotes := 0
+			for _, count := range state.Options {
+				totalVotes += count
+			}
+			poll.VoteCount = totalVotes
 		}
+
+		polls = append(polls, poll)
 	}
 
 	return polls, nil
