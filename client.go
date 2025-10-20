@@ -231,33 +231,14 @@ func ListPollWorkflows(c client.Client, pageSize int) ([]PollListItem, error) {
 	}
 
 	for _, exec := range resp.Executions {
+		// Only use data from the list response - no additional queries!
+		// This makes the page load instantly instead of doing N+1 queries.
+		// Question and VoteCount will be shown on the poll detail page.
 		poll := PollListItem{
 			WorkflowID: exec.Execution.WorkflowId,
 			StartTime:  exec.StartTime.AsTime(),
 			Status:     exec.Status.String(),
 		}
-
-		// Try to query the poll for its config to get the question and vote count
-		// Use short timeout for each query
-		queryCtx, queryCancel := context.WithTimeout(ctx, 2*time.Second)
-		config, err := QueryPollWorkflowWithContext[PollConfig](queryCtx, c, poll.WorkflowID, "get_config")
-		queryCancel()
-		if err == nil {
-			poll.Question = config.Question
-		}
-
-		queryCtx, queryCancel = context.WithTimeout(ctx, 2*time.Second)
-		state, err := QueryPollWorkflowWithContext[PollState](queryCtx, c, poll.WorkflowID, "get_state")
-		queryCancel()
-		if err == nil {
-			// Count total votes
-			totalVotes := 0
-			for _, count := range state.Options {
-				totalVotes += count
-			}
-			poll.VoteCount = totalVotes
-		}
-
 		polls = append(polls, poll)
 	}
 

@@ -10,11 +10,7 @@
     <a href="/poll/{{.WorkflowID}}" class="block">
       <div class="glass-container p-6 hover:shadow-lg transition-shadow duration-300">
         <h3 class="text-xl font-bold mb-3 text-white">
-          {{if .Question}}
-            {{.Question}}
-          {{else}}
-            Loading...
-          {{end}}
+          Poll {{.WorkflowID}}
         </h3>
 
         <div class="space-y-2 text-sm">
@@ -24,18 +20,13 @@
           </div>
 
           <div class="flex justify-between items-center">
-            <span class="text-gray-400">Total Votes:</span>
-            <span class="text-pink-400 font-bold">{{.VoteCount}}</span>
-          </div>
-
-          <div class="flex justify-between items-center">
             <span class="text-gray-400">Started:</span>
-            <span class="text-gray-300 text-xs">{{.StartTime.Format "Jan 2, 2006"}}</span>
+            <span class="text-gray-300 text-xs">{{.StartTime.Format "Jan 2, 2006 3:04 PM"}}</span>
           </div>
         </div>
 
         <div class="mt-4 pt-4 border-t border-gray-700">
-          <span class="text-xs text-gray-500 font-mono break-all">{{.WorkflowID}}</span>
+          <span class="text-xs text-cyan-400">Click to view details →</span>
         </div>
       </div>
     </a>
