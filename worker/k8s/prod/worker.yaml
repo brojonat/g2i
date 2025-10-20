@@ -5,7 +5,7 @@ metadata:
     app: gip-worker
   name: gip-worker
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: gip-worker
