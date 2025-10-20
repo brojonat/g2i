@@ -289,6 +289,7 @@ func StoreContent(ctx context.Context, data []byte, provider, bucket, key, keyPr
 type WaitForPaymentInput struct {
 	ForohtooServerURL string  // URL of the forohtoo server
 	PaymentWallet     string  // Solana wallet address to monitor
+	Network           string  // Solana network ("mainnet" or "devnet")
 	WorkflowID        string  // Workflow ID to match in transaction memo
 	ExpectedAmount    float64 // Expected payment amount in SOL
 }
@@ -306,18 +307,18 @@ func WaitForPayment(ctx context.Context, input WaitForPaymentInput) (WaitForPaym
 	logger.Info("Waiting for payment", "wallet", input.PaymentWallet, "workflowID", input.WorkflowID)
 
 	// Create forohtoo client
-	fmt.Println("Creating forohtoo client", "url", input.ForohtooServerURL)
+	fmt.Println("Creating forohtoo client", "url", input.ForohtooServerURL, "network", input.Network)
 	cl := client.NewClient(input.ForohtooServerURL, nil, slog.Default())
 
 	// start tracking the wallet
-	err := cl.Register(ctx, input.PaymentWallet, 10*time.Second)
+	err := cl.Register(ctx, input.PaymentWallet, input.Network, 10*time.Second)
 	if err != nil {
 		logger.Error("Failed to register wallet", "error", err)
 		return WaitForPaymentOutput{}, fmt.Errorf("failed to register wallet: %w", err)
 	}
 
 	// Wait for a transaction that matches the workflow ID in the memo
-	txn, err := cl.Await(ctx, input.PaymentWallet, func(txn *client.Transaction) bool {
+	txn, err := cl.Await(ctx, input.PaymentWallet, input.Network, func(txn *client.Transaction) bool {
 		// Check if the transaction memo contains the workflow ID
 		return strings.Contains(txn.Memo, input.WorkflowID) && txn.Amount == int64(input.ExpectedAmount)
 	})

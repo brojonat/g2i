@@ -8,6 +8,10 @@ cloud.google.com/go/compute/metadata v0.7.0/go.mod h1:j5MvL9PprKL39t166CoB1uVHfQ
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/brojonat/forohtoo v0.0.0-20251016033305-368e2111a28c h1:owOaj//Bz184Qh9Px1u93yjB4zFBSeVeQeTVd5r9EQw=
 github.com/brojonat/forohtoo v0.0.0-20251016033305-368e2111a28c/go.mod h1:TG9cfmjMcuo8mme0vM/MYk9DZBL1IkT1c0Ivu8y4kq4=
+github.com/brojonat/forohtoo v0.0.0-20251018223002-738f43271e0c h1:ZIc0M9nMV0B7uwBfNEho+MSva1wsgXGgDBeawJ3Iq8U=
+github.com/brojonat/forohtoo v0.0.0-20251018223002-738f43271e0c/go.mod h1:OZiQXPcc2fZATxh8uudl0djDbvyZis8N2mx2JtcPAoY=
+github.com/brojonat/forohtoo v0.0.0-20251020015109-5d7588f641eb h1:0jreGtmoe+huXltczHIXe0Gft9ewmT7zBhoYtlOi8j4=
+github.com/brojonat/forohtoo v0.0.0-20251020015109-5d7588f641eb/go.mod h1:OZiQXPcc2fZATxh8uudl0djDbvyZis8N2mx2JtcPAoY=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
 github.com/chai2010/webp v1.4.0 h1:6DA2pkkRUPnbOHvvsmGI3He1hBKf/bkRlniAiSGuEko=
 github.com/chai2010/webp v1.4.0/go.mod h1:0XVwvZWdjjdxpUEIf7b9g9VkHFnInUSYujwqTLEuldU=

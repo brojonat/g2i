@@ -164,6 +164,7 @@ func PollWorkflow(ctx workflow.Context, config PollConfig) (PollSummary, error) 
 		paymentInput := WaitForPaymentInput{
 			ForohtooServerURL: os.Getenv("FOROHTOO_SERVER_URL"),
 			PaymentWallet:     config.PaymentWallet,
+			Network:           getEnvOrDefault("SOLANA_NETWORK", "mainnet"),
 			WorkflowID:        workflowID,
 			ExpectedAmount:    config.PaymentAmount,
 		}
@@ -259,4 +260,12 @@ func PollWorkflow(ctx workflow.Context, config PollConfig) (PollSummary, error) 
 		Voters:   state.Voters,
 	}
 	return summary, nil
+}
+
+// getEnvOrDefault returns the environment variable value or a default if not set
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }
