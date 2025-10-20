@@ -216,8 +216,8 @@ func ListPollWorkflows(c client.Client, pageSize int) ([]PollListItem, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Query for RUNNING poll workflows only, sorted by start time descending (most recent first)
-	query := "WorkflowType='PollWorkflow' AND ExecutionStatus='Running' ORDER BY StartTime DESC"
+	// Query for RUNNING poll workflows only (most recent workflows are returned first by default)
+	query := "WorkflowType='PollWorkflow' AND ExecutionStatus='Running'"
 
 	var polls []PollListItem
 
