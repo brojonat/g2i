@@ -739,94 +739,98 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 
 		s.logger.Info("successfully started poll workflow", "workflow_id", workflowID)
 
-		// Get a list of all users who already have generated content.
-		existingCreators, err := s.storageProvider.ListTopLevelFolders(r.Context(), os.Getenv("STORAGE_BUCKET"))
-		if err != nil {
-			s.logger.Error("failed to list existing creators", "error", err)
-			existingCreators = []string{}
-		}
-
-		// Create a set for quick lookups.
-		existingCreatorsSet := make(map[string]struct{})
-		for _, creator := range existingCreators {
-			existingCreatorsSet[creator] = struct{}{}
-		}
-
-		// Separate users who need image generation from those who have existing images.
-		filteredUsernames := []string{}
-		existingUsernames := []string{}
-		for _, username := range parsedRequest.Usernames {
-			if _, exists := existingCreatorsSet[username]; !exists {
-				filteredUsernames = append(filteredUsernames, username)
-			} else {
-				existingUsernames = append(existingUsernames, username)
+		// Kick off image orchestration in the background.
+		// This includes listing existing creators, copying existing images, and starting generation workflows.
+		// By doing this asynchronously, the user gets redirected immediately to the payment page.
+		go func() {
+			// Get a list of all users who already have generated content.
+			existingCreators, err := s.storageProvider.ListTopLevelFolders(context.Background(), os.Getenv("STORAGE_BUCKET"))
+			if err != nil {
+				s.logger.Error("failed to list existing creators", "error", err)
+				existingCreators = []string{}
 			}
-		}
 
-		// Log the operation summary
-		if len(existingUsernames) > 0 {
-			s.logger.Info("copying existing images", "count", len(existingUsernames), "users", existingUsernames)
-		}
+			// Create a set for quick lookups.
+			existingCreatorsSet := make(map[string]struct{})
+			for _, creator := range existingCreators {
+				existingCreatorsSet[creator] = struct{}{}
+			}
 
-		// For users who already have images, copy their latest image to the poll's folder in the background.
-		for _, username := range existingUsernames {
-			go func(user string) {
-				bucket := os.Getenv("STORAGE_BUCKET")
-
-				latestKey, err := s.storageProvider.GetLatestObjectKeyForUser(context.Background(), bucket, user)
-				if err != nil {
-					log.Printf("Failed to find latest image for user %s: %v", user, err)
-					return
-				}
-
-				parts := strings.Split(latestKey, "/")
-				filename := parts[len(parts)-1]
-				fileExt := strings.TrimPrefix(path.Ext(filename), ".")
-				dstKey := fmt.Sprintf("%s/%s.%s", workflowID, user, fileExt)
-
-				err = s.storageProvider.Copy(context.Background(), bucket, latestKey, bucket, dstKey)
-				if err != nil {
-					log.Printf("Failed to copy image for user %s to poll folder: %v", user, err)
+			// Separate users who need image generation from those who have existing images.
+			filteredUsernames := []string{}
+			existingUsernames := []string{}
+			for _, username := range parsedRequest.Usernames {
+				if _, exists := existingCreatorsSet[username]; !exists {
+					filteredUsernames = append(filteredUsernames, username)
 				} else {
-					log.Printf("Successfully copied existing image for user %s to poll folder", user)
+					existingUsernames = append(existingUsernames, username)
 				}
-			}(username)
-		}
-
-		// After the poll is created, kick off the content generation workflows for each new user.
-		if len(filteredUsernames) > 0 {
-			s.logger.Info("starting image generation", "count", len(filteredUsernames), "users", filteredUsernames)
-
-			width, _ := strconv.Atoi(os.Getenv("IMAGE_WIDTH"))
-			height, _ := strconv.Atoi(os.Getenv("IMAGE_HEIGHT"))
-			baseInput := AppInput{
-				ModelName:                     os.Getenv("GEMINI_MODEL"),
-				ResearchAgentSystemPrompt:     getEnvB64("RESEARCH_AGENT_SYSTEM_PROMPT"),
-				ContentGenerationSystemPrompt: getEnvB64("CONTENT_GENERATION_SYSTEM_PROMPT"),
-				StorageProvider:               os.Getenv("STORAGE_PROVIDER"),
-				StorageBucket:                 os.Getenv("STORAGE_BUCKET"),
-				ImageFormat:                   os.Getenv("IMAGE_FORMAT"),
-				ImageWidth:                    width,
-				ImageHeight:                   height,
 			}
 
-			workflowInput := PollImageGenerationInput{
-				Usernames: filteredUsernames,
-				PollID:    workflowID,
-				AppInput:  baseInput,
+			// Log the operation summary
+			if len(existingUsernames) > 0 {
+				s.logger.Info("copying existing images", "count", len(existingUsernames), "users", existingUsernames)
 			}
 
-			imageGenWorkflowID := "g2i-poll-image-generation-" + workflowID
-			go func() {
+			// For users who already have images, copy their latest image to the poll's folder in the background.
+			for _, username := range existingUsernames {
+				go func(user string) {
+					bucket := os.Getenv("STORAGE_BUCKET")
+
+					latestKey, err := s.storageProvider.GetLatestObjectKeyForUser(context.Background(), bucket, user)
+					if err != nil {
+						log.Printf("Failed to find latest image for user %s: %v", user, err)
+						return
+					}
+
+					parts := strings.Split(latestKey, "/")
+					filename := parts[len(parts)-1]
+					fileExt := strings.TrimPrefix(path.Ext(filename), ".")
+					dstKey := fmt.Sprintf("%s/%s.%s", workflowID, user, fileExt)
+
+					err = s.storageProvider.Copy(context.Background(), bucket, latestKey, bucket, dstKey)
+					if err != nil {
+						log.Printf("Failed to copy image for user %s to poll folder: %v", user, err)
+					} else {
+						log.Printf("Successfully copied existing image for user %s to poll folder", user)
+					}
+				}(username)
+			}
+
+			// After the poll is created, kick off the content generation workflows for each new user.
+			if len(filteredUsernames) > 0 {
+				s.logger.Info("starting image generation", "count", len(filteredUsernames), "users", filteredUsernames)
+
+				width, _ := strconv.Atoi(os.Getenv("IMAGE_WIDTH"))
+				height, _ := strconv.Atoi(os.Getenv("IMAGE_HEIGHT"))
+				baseInput := AppInput{
+					ModelName:                     os.Getenv("GEMINI_MODEL"),
+					ResearchAgentSystemPrompt:     getEnvB64("RESEARCH_AGENT_SYSTEM_PROMPT"),
+					ContentGenerationSystemPrompt: getEnvB64("CONTENT_GENERATION_SYSTEM_PROMPT"),
+					StorageProvider:               os.Getenv("STORAGE_PROVIDER"),
+					StorageBucket:                 os.Getenv("STORAGE_BUCKET"),
+					ImageFormat:                   os.Getenv("IMAGE_FORMAT"),
+					ImageWidth:                    width,
+					ImageHeight:                   height,
+				}
+
+				workflowInput := PollImageGenerationInput{
+					Usernames: filteredUsernames,
+					PollID:    workflowID,
+					AppInput:  baseInput,
+				}
+
+				imageGenWorkflowID := "g2i-poll-image-generation-" + workflowID
 				_, err := StartPollImageGenerationWorkflow(s.temporalClient, imageGenWorkflowID, workflowInput)
 				if err != nil {
 					log.Printf("Failed to start poll image generation workflow %s: %v", imageGenWorkflowID, err)
 				} else {
 					log.Printf("Successfully started poll image generation workflow %s", imageGenWorkflowID)
 				}
-			}()
-		}
+			}
+		}()
 
+		// Redirect immediately - user doesn't need to wait for image orchestration
 		w.Header().Set("HX-Redirect", "/poll/"+workflowID)
 		w.WriteHeader(http.StatusOK)
 	})
