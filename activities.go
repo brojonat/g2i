@@ -318,7 +318,7 @@ func WaitForPayment(ctx context.Context, input WaitForPaymentInput) (WaitForPaym
 	}
 
 	// Wait for a transaction that matches the workflow ID in the memo
-	txn, err := cl.Await(ctx, input.PaymentWallet, input.Network, func(txn *client.Transaction) bool {
+	txn, err := cl.Await(ctx, input.PaymentWallet, input.Network, 24*time.Hour, func(txn *client.Transaction) bool {
 		// Check if the transaction memo contains the workflow ID
 		return strings.Contains(txn.Memo, input.WorkflowID) && txn.Amount == int64(input.ExpectedAmount)
 	})
