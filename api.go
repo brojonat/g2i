@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/skip2/go-qrcode"
+	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 	"golang.org/x/exp/errors"
@@ -842,6 +843,24 @@ func (s *APIServer) handleGetPollDetails() http.Handler {
 		workflowID := r.PathValue("id")
 		if len(workflowID) > MaxWorkflowIDLength {
 			s.writeBadRequest(w, r, "Invalid poll ID.")
+			return
+		}
+
+		// Check if workflow exists and is running
+		desc, err := GetWorkflowDescription(s.temporalClient, workflowID)
+		if err != nil {
+			var notFoundErr *serviceerror.NotFound
+			if errors.As(err, &notFoundErr) {
+				s.writeNotFound(w, r, "Poll not found")
+				return
+			}
+			s.writeInternalError(w, r, err.Error())
+			return
+		}
+
+		// Only show poll details for running workflows
+		if desc.WorkflowExecutionInfo.Status != enums.WORKFLOW_EXECUTION_STATUS_RUNNING {
+			s.writeNotFound(w, r, "Poll not found")
 			return
 		}
 
