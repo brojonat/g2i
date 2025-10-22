@@ -847,18 +847,33 @@ func (s *APIServer) handleGetPollDetails() http.Handler {
 
 		config, err := QueryPollWorkflow[PollConfig](s.temporalClient, workflowID, "get_config")
 		if err != nil {
+			var notFoundErr *serviceerror.NotFound
+			if errors.As(err, &notFoundErr) {
+				s.writeNotFound(w, r, "Poll not found")
+				return
+			}
 			s.writeInternalError(w, r, err.Error())
 			return
 		}
 
 		options, err := QueryPollWorkflow[[]string](s.temporalClient, workflowID, "get_options")
 		if err != nil {
+			var notFoundErr *serviceerror.NotFound
+			if errors.As(err, &notFoundErr) {
+				s.writeNotFound(w, r, "Poll not found")
+				return
+			}
 			s.writeInternalError(w, r, err.Error())
 			return
 		}
 
 		state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
 		if err != nil {
+			var notFoundErr *serviceerror.NotFound
+			if errors.As(err, &notFoundErr) {
+				s.writeNotFound(w, r, "Poll not found")
+				return
+			}
 			s.writeInternalError(w, r, err.Error())
 			return
 		}
