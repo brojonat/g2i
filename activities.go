@@ -22,6 +22,11 @@ import (
 	"google.golang.org/genai"
 )
 
+const (
+	// USDCMintAddress is the USDC token mint address on Solana mainnet
+	USDCMintAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+)
+
 // GenerateResponsesTurnInput holds the parameters for the GenerateResponsesTurnActivity.
 type GenerateResponsesTurnInput struct {
 	OpenAIConfig       OpenAIConfig
@@ -291,7 +296,9 @@ type WaitForPaymentInput struct {
 	PaymentWallet     string  // Solana wallet address to monitor
 	Network           string  // Solana network ("mainnet" or "devnet")
 	WorkflowID        string  // Workflow ID to match in transaction memo
-	ExpectedAmount    float64 // Expected payment amount in SOL
+	ExpectedAmount    float64 // Expected payment amount in USDC
+	AssetType         string  // Asset type (e.g., "spl-token")
+	TokenMint         string  // Token mint address (e.g., USDC mint)
 }
 
 // WaitForPaymentOutput defines the output from the WaitForPayment activity.
@@ -310,11 +317,11 @@ func WaitForPayment(ctx context.Context, input WaitForPaymentInput) (WaitForPaym
 	fmt.Println("Creating forohtoo client", "url", input.ForohtooServerURL, "network", input.Network)
 	cl := client.NewClient(input.ForohtooServerURL, nil, slog.Default())
 
-	// start tracking the wallet
-	err := cl.Register(ctx, input.PaymentWallet, input.Network, 10*time.Second)
+	// Register the wallet to track the specific asset (token mint)
+	err := cl.RegisterAsset(ctx, input.PaymentWallet, input.Network, input.AssetType, input.TokenMint, 10*time.Second)
 	if err != nil {
-		logger.Error("Failed to register wallet", "error", err)
-		return WaitForPaymentOutput{}, fmt.Errorf("failed to register wallet: %w", err)
+		logger.Error("Failed to register wallet asset", "error", err, "assetType", input.AssetType, "tokenMint", input.TokenMint)
+		return WaitForPaymentOutput{}, fmt.Errorf("failed to register wallet asset: %w", err)
 	}
 
 	// Wait for a transaction that matches the workflow ID in the memo

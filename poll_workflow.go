@@ -167,6 +167,8 @@ func PollWorkflow(ctx workflow.Context, config PollConfig) (PollSummary, error) 
 			Network:           getEnvOrDefault("SOLANA_NETWORK", "mainnet"),
 			WorkflowID:        workflowID,
 			ExpectedAmount:    config.PaymentAmount,
+			AssetType:         "spl-token",
+			TokenMint:         USDCMintAddress,
 		}
 
 		err = workflow.ExecuteActivity(activityCtx, WaitForPayment, paymentInput).Get(activityCtx, &paymentOutput)
