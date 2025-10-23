@@ -54,11 +54,27 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 
 	ghTool := Tool{
 		Name:        "gh",
-		Description: "Execute a GitHub CLI command. Examples: `gh api users/USERNAME`, `gh repo list USERNAME --source --no-forks --json name,pushedAt`, `gh commit list --repo OWNER/REPO -L 5`, `gh commit view SHA --repo OWNER/REPO --patch`, `gh repo view OWNER/REPO --json name,pushedAt`",
+		Description: "Execute GitHub CLI commands to fetch user/repo data. Supports REST API and GraphQL queries.",
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"command": map[string]string{"type": "string", "description": "The `gh` command arguments to execute. Do not include 'gh' in the command."},
+				"command": map[string]string{
+					"type": "string",
+					"description": `The gh command to execute (without 'gh' prefix). Examples:
+
+	REST API Examples:
+	- api users/USERNAME
+	- api users/USERNAME/repos --paginate
+	- api repos/OWNER/REPO
+	- api repos/OWNER/REPO/contributors
+
+	GraphQL Examples (for richer data):
+	- api graphql -f query='query($userName:String!) { user(login: $userName) { name bio followers { totalCount } } }' -f userName=USERNAME
+	- api graphql -f query='query($userName:String!) { user(login: $userName) { contributionsCollection { contributionCalendar { totalContributions weeks { contributionDays { contributionCount date } } } } } }' -f userName=USERNAME
+
+	Use GraphQL for: contributions, complex nested data, multiple fields in one query
+	Use REST for: simple lookups, repository lists`,
+				},
 			},
 			"required":             []string{"command"},
 			"additionalProperties": false,
