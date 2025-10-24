@@ -318,7 +318,8 @@ func WaitForPayment(ctx context.Context, input WaitForPaymentInput) (WaitForPaym
 	cl := client.NewClient(input.ForohtooServerURL, nil, slog.Default())
 
 	// Register the wallet to track the specific asset (token mint)
-	err := cl.RegisterAsset(ctx, input.PaymentWallet, input.Network, input.AssetType, input.TokenMint, 10*time.Second)
+	// NOTE: the current implementation of the forohtoo client requires a poll interval of at least 1 minute
+	err := cl.RegisterAsset(ctx, input.PaymentWallet, input.Network, input.AssetType, input.TokenMint, 1*time.Minute)
 	if err != nil {
 		logger.Error("Failed to register wallet asset", "error", err, "assetType", input.AssetType, "tokenMint", input.TokenMint)
 		return WaitForPaymentOutput{}, fmt.Errorf("failed to register wallet asset: %w", err)
