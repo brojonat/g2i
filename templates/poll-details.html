@@ -1,15 +1,5 @@
 {{define "content"}}
-<div
-  class="container mx-auto px-4 py-8"
-  {{if
-  and
-  .Config.PaymentRequired
-  (not
-  .PaymentPaid)}}hx-get="/poll/{{.WorkflowID}}"
-  hx-trigger="every 10s"
-  hx-swap="outerHTML"
-  {{end}}
->
+<div class="container mx-auto px-4 py-8">
   <h2 class="text-3xl font-bold text-center mb-8 cyber-text-glow">
     {{ .Config.Question }}
   </h2>
@@ -18,6 +8,10 @@
   .Config.PaymentRequired (not .PaymentPaid)}}
   <div
     class="max-w-md mx-auto mb-8 bg-gray-800 border border-blue-500 rounded-lg p-6"
+    hx-get="/poll/{{.WorkflowID}}"
+    hx-trigger="every 10s"
+    hx-swap="outerHTML"
+    hx-select=".container"
   >
     <div class="text-center mb-4">
       <h3 class="text-xl font-bold text-blue-400 mb-2">Payment Required</h3>
@@ -53,6 +47,7 @@
     </div>
     {{end}}
   </div>
-  {{end}} {{template "poll-results-partial" .}}
+  {{else}} {{/* Only show poll results if payment is not required OR payment has
+  been made */}} {{template "poll-results-partial" .}} {{end}}
 </div>
 {{end}}
