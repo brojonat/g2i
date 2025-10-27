@@ -38,8 +38,12 @@ type GenerateResponsesTurnInput struct {
 
 // ExecuteGhCommandActivity is an activity that executes a GitHub CLI command.
 func ExecuteGhCommandActivity(ctx context.Context, command string) (string, error) {
+	logger := activity.GetLogger(ctx)
+	logger.Info("Executing gh command", "command", command)
+
 	output, err := executeGhCommand(ctx, command)
 	if err != nil {
+		logger.Error("gh command failed", "command", command, "error", err)
 		var exitErr *exec.ExitError
 		// Check if the error is an ExitError, which indicates the command ran but failed.
 		// These are business logic failures (e.g., bad command) that shouldn't be retried.
@@ -50,7 +54,32 @@ func ExecuteGhCommandActivity(ctx context.Context, command string) (string, erro
 		// For other errors (e.g., command not found, context cancelled), let Temporal retry.
 		return "", err
 	}
+
+	// Log the output length and a preview
+	outputLength := len(output)
+	logger.Info("gh command completed",
+		"command", command,
+		"output_length", outputLength,
+		"output_preview", truncateString(output, 200))
+
+	// For contribution queries, log if output appears empty or problematic
+	if strings.Contains(command, "contribution") || strings.Contains(command, "graphql") {
+		if outputLength == 0 {
+			logger.Warn("gh command returned empty output", "command", command)
+		} else if strings.Contains(output, "null") {
+			logger.Warn("gh command output contains 'null'", "command", command, "output", truncateString(output, 500))
+		}
+	}
+
 	return output, nil
+}
+
+// truncateString truncates a string to maxLen and adds "..." if it was truncated
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // GenerateResponsesTurnActivity is an activity that generates a turn in the agentic conversation.

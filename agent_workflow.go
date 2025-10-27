@@ -131,8 +131,15 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 		conversation = append(conversation, fmt.Sprintf("Turn %d: Assistant Response: %s", i+1, turnResult.Assistant))
 
 		if len(turnResult.Calls) > 0 {
-			logger.Info("LLM requested tool calls", "calls", turnResult.Calls)
+			logger.Info("LLM requested tool calls", "count", len(turnResult.Calls))
+			for _, toolCall := range turnResult.Calls {
+				logger.Info("Tool call details",
+					"call_id", toolCall.ID,
+					"name", toolCall.Name,
+					"arguments", toolCall.Arguments)
+			}
 			conversation = append(conversation, fmt.Sprintf("Turn %d: Tool Calls: %+v", i+1, turnResult.Calls))
+
 			for _, toolCall := range turnResult.Calls {
 				var toolResult string
 				switch toolCall.Name {
@@ -140,6 +147,7 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 					var profile GitHubProfile
 					if err := json.Unmarshal([]byte(toolCall.Arguments), &profile); err != nil {
 						toolResult = fmt.Sprintf(`{"error": "failed to parse arguments: %v"}`, err)
+						logger.Error("Failed to parse submit_github_profile arguments", "error", err)
 					} else {
 						githubProfile = profile
 						logger.Info("Exiting agentic loop with profile")
@@ -151,27 +159,54 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 					}
 					if err := json.Unmarshal([]byte(toolCall.Arguments), &args); err != nil {
 						toolResult = fmt.Sprintf(`{"error": "failed to parse arguments: %v"}`, err)
+						logger.Error("Failed to parse gh command arguments", "error", err)
 					} else {
+						logger.Info("Executing gh tool", "command", args.Command)
 						var result string
 						err := workflow.ExecuteActivity(ctx, ExecuteGhCommandActivity, args.Command).Get(ctx, &result)
 						if err != nil {
 							toolResult = fmt.Sprintf(`{"error": "failed to execute tool: %v"}`, err)
+							logger.Error("gh tool execution failed", "command", args.Command, "error", err)
 						} else {
 							toolResult = result
+							resultLen := len(result)
+							logger.Info("gh tool execution successful",
+								"command", args.Command,
+								"result_length", resultLen,
+								"result_empty", resultLen == 0)
+
+							// Log more for contribution-related queries
+							if strings.Contains(args.Command, "contribution") || strings.Contains(args.Command, "graphql") {
+								const maxDetailedLog = 1000
+								preview := result
+								if len(preview) > maxDetailedLog {
+									preview = preview[:maxDetailedLog] + "..."
+								}
+								logger.Info("gh graphql/contribution result",
+									"command", args.Command,
+									"full_result", preview,
+									"contains_null", strings.Contains(result, "null"))
+							}
 						}
 					}
 				default:
 					toolResult = `{"error": "unknown tool requested"}`
+					logger.Warn("Unknown tool requested", "tool_name", toolCall.Name)
 				}
 				pendingOutputs[toolCall.ID] = toolResult
+
+				// Log tool results with adaptive truncation
 				const maxLogLength = 512
 				truncatedResult := toolResult
 				if len(truncatedResult) > maxLogLength {
 					truncatedResult = truncatedResult[:maxLogLength] + "..."
 				}
-				logger.Info("Tool call result", "call_id", toolCall.ID, "name", toolCall.Name, "result", truncatedResult)
+				logger.Info("Tool call completed",
+					"call_id", toolCall.ID,
+					"name", toolCall.Name,
+					"result_length", len(toolResult),
+					"result_preview", truncatedResult)
 				conversation = append(conversation, fmt.Sprintf("Turn %d: Tool Result for %s: %s", i+1, toolCall.ID, truncatedResult))
-
 			}
 			continue
 		}
