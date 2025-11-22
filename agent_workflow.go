@@ -29,7 +29,7 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 
 	submitTool := Tool{
 		Name:        "submit_github_profile",
-		Description: "Submit the final GitHub profile information.",
+		Description: "REQUIRED: Submit the final GitHub profile information. You MUST call this function once you have gathered the basic profile data (username, bio, location, repos, languages, top repos, contribution graph, and professional summary). Do NOT ask for permission or wait for further instructions - call this immediately when you have the required data.",
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -87,7 +87,7 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 	var githubProfile GitHubProfile
 
 	for i := 0; i < maxTurns; i++ {
-		logger.Info("Agent turn", "turn", i+1)
+		logger.Info("Agent turn", "turn", i+1, "maxTurns", maxTurns)
 		var turnResult GenerateResponsesTurnResult
 		var actErr error
 
@@ -97,11 +97,22 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 			APIHost: appConfig.ResearchOrchestratorBaseURL,
 		}
 
+		// Add reminder to submit when approaching turn limit OR if we have basic data
+		userPrompt := prompt
+		if i > 0 && i >= maxTurns-3 {
+			userPrompt = "CRITICAL: You are running out of turns. You MUST call 'submit_github_profile' RIGHT NOW with the data you have collected. Do NOT respond with text. Do NOT ask questions. Call submit_github_profile immediately with username, bio, location, website, public_repos, original_repos, forked_repos, languages, top_repositories, contribution_graph, professional_summary, and code_snippets fields."
+			logger.Warn("Adding urgent submission reminder", "turn", i+1)
+		} else if i >= 5 {
+			// After 5 turns, start reminding to submit soon
+			userPrompt = "REMINDER: Once you have gathered username, bio, location, top repos, languages, contribution data, and can write a professional summary, you should immediately call 'submit_github_profile'. Do not wait for permission or ask what to do next."
+			logger.Info("Adding gentle submission reminder", "turn", i+1)
+		}
+
 		if previousResponseID == "" {
 			input := GenerateResponsesTurnInput{
 				OpenAIConfig:       cfg,
 				PreviousResponseID: previousResponseID,
-				UserInput:          prompt,
+				UserInput:          userPrompt,
 				Tools:              tools,
 			}
 			err := workflow.ExecuteActivity(ctx, GenerateResponsesTurnActivity, input).Get(ctx, &turnResult)
@@ -109,10 +120,16 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 				actErr = err
 			}
 		} else {
+			// For subsequent turns, use userPrompt if we have reminders
+			nextInput := ""
+			if i >= 5 {
+				// Pass the reminder (either gentle or urgent)
+				nextInput = userPrompt
+			}
 			input := GenerateResponsesTurnInput{
 				OpenAIConfig:       cfg,
 				PreviousResponseID: previousResponseID,
-				UserInput:          "",
+				UserInput:          nextInput,
 				Tools:              tools,
 				FunctionOutputs:    pendingOutputs,
 			}
@@ -126,6 +143,17 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 			logger.Error("LLM activity failed", "error", actErr)
 			return GitHubProfile{}, actErr
 		}
+
+		// Check for empty response
+		if strings.TrimSpace(turnResult.Assistant) == "" && len(turnResult.Calls) == 0 {
+			logger.Error("LLM returned empty response",
+				"turn", i+1,
+				"responseID", turnResult.ID,
+				"hasAssistant", turnResult.Assistant != "",
+				"numCalls", len(turnResult.Calls))
+			return GitHubProfile{}, fmt.Errorf("LLM returned empty response on turn %d (response ID: %s)", i+1, turnResult.ID)
+		}
+
 		previousResponseID = turnResult.ID
 		pendingOutputs = map[string]string{}
 		conversation = append(conversation, fmt.Sprintf("Turn %d: Assistant Response: %s", i+1, turnResult.Assistant))
@@ -210,11 +238,20 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 			}
 			continue
 		}
-		if strings.TrimSpace(turnResult.Assistant) == "" {
-			logger.Warn("No tool calls and no assistant content; ending conversation")
-			break
+
+		// If we get here, the LLM responded with text but no tool calls
+		logger.Info("LLM responded with text but no tool calls", "text", turnResult.Assistant)
+
+		// Check if the response indicates data gathering is complete
+		lowerText := strings.ToLower(turnResult.Assistant)
+		if (strings.Contains(lowerText, "done") ||
+			strings.Contains(lowerText, "summary") ||
+			strings.Contains(lowerText, "next steps")) &&
+			(strings.Contains(lowerText, "username") || strings.Contains(lowerText, "bio")) {
+			logger.Warn("LLM appears to have finished data gathering but didn't call submit_github_profile. Forcing reminder on next turn.")
+			// The next turn will get the reminder to submit
 		}
-		logger.Info("LLM responded with text", "text", turnResult.Assistant)
+		// Continue to next turn to see if LLM will call tools
 	}
 
 	return GitHubProfile{}, fmt.Errorf("agentic loop finished without submitting a profile")

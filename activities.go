@@ -344,7 +344,6 @@ func WaitForPayment(ctx context.Context, input WaitForPaymentInput) (WaitForPaym
 	logger.Info("Waiting for payment", "wallet", input.PaymentWallet, "workflowID", input.WorkflowID)
 
 	// Create forohtoo client
-	fmt.Println("Creating forohtoo client", "url", input.ForohtooServerURL, "network", input.Network)
 	cl := client.NewClient(input.ForohtooServerURL, nil, slog.Default())
 
 	// Register the wallet to track the specific asset (token mint)
@@ -354,16 +353,64 @@ func WaitForPayment(ctx context.Context, input WaitForPaymentInput) (WaitForPaym
 		return WaitForPaymentOutput{}, fmt.Errorf("failed to register wallet asset: %w", err)
 	}
 
+	// Record heartbeat to let Temporal know we're alive
+	activity.RecordHeartbeat(ctx, "Starting to await payment")
+
+	// Create a context that will send heartbeats periodically
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				activity.RecordHeartbeat(ctx, "Awaiting payment transaction")
+			}
+		}
+	}()
+
 	// Wait for a transaction that matches the workflow ID in the memo
+	// The 24-hour lookback checks historical transactions before awaiting new ones
+	logger.Info("Starting Await call",
+		"wallet", input.PaymentWallet,
+		"network", input.Network,
+		"lookback", "24h",
+		"workflowID", input.WorkflowID,
+		"expectedAmount", input.ExpectedAmount)
+
 	txn, err := cl.Await(ctx, input.PaymentWallet, input.Network, 24*time.Hour, func(txn *client.Transaction) bool {
 		// Convert expected amount from full USDC units to smallest unit (micro-USDC)
 		// 1 USDC = 1,000,000 micro-USDC (6 decimals)
 		expectedAmountInSmallestUnit := int64(input.ExpectedAmount * 1_000_000)
+
+		// Log every transaction we receive (even non-matching ones)
+		memoStr := "nil"
+		if txn.Memo != nil {
+			memoStr = *txn.Memo
+		}
+		logger.Info("Transaction received in callback",
+			"signature", txn.Signature,
+			"amount", txn.Amount,
+			"expectedAmount", expectedAmountInSmallestUnit,
+			"memo", memoStr,
+			"blockTime", txn.BlockTime)
+
 		// Check if the transaction memo contains the workflow ID and amount matches
 		if txn.Memo == nil {
+			logger.Info("Rejecting transaction: no memo")
 			return false
 		}
-		return strings.Contains(*txn.Memo, input.WorkflowID) && txn.Amount == expectedAmountInSmallestUnit
+
+		memoContainsWorkflowID := strings.Contains(*txn.Memo, input.WorkflowID)
+		amountMatches := txn.Amount == expectedAmountInSmallestUnit
+
+		logger.Info("Evaluating transaction match",
+			"memoContainsWorkflowID", memoContainsWorkflowID,
+			"amountMatches", amountMatches,
+			"accepted", memoContainsWorkflowID && amountMatches)
+
+		return memoContainsWorkflowID && amountMatches
 	})
 
 	if err != nil {

@@ -8,7 +8,7 @@
   (not
   .PaymentPaid)}}
   hx-get="/poll/{{.WorkflowID}}"
-  hx-trigger="every 10s"
+  hx-trigger="every 15s"
   hx-swap="outerHTML"
   {{end}}
 >
@@ -53,7 +53,12 @@
       </a>
       {{end}}
       <button
-        onclick="document.getElementById('payment-ui').innerHTML = '<div class=\'flex flex-col items-center py-8\'><div class=\'animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500 mb-4\'></div><p class=\'text-gray-300 text-lg\'>Waiting for payment confirmation...</p><p class=\'text-gray-500 text-sm mt-2\'>This may take a few moments</p></div>'"
+        onclick="
+          document.getElementById('payment-ui').innerHTML = '<div class=\'flex flex-col items-center py-8\'><div class=\'animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500 mb-4\'></div><p class=\'text-gray-300 text-lg\'>Waiting for payment confirmation...</p><p class=\'text-gray-500 text-sm mt-2\'>This may take up to 30 seconds</p></div>';
+          var pollContent = document.getElementById('poll-content-{{.WorkflowID}}');
+          pollContent.setAttribute('hx-trigger', 'every 2s');
+          htmx.process(pollContent);
+        "
         class="w-full max-w-sm px-6 py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 font-medium rounded-lg shadow transition-all duration-300 text-center"
       >
         I've Paid

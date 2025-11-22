@@ -5,7 +5,6 @@
     hx-post="/poll"
     hx-target="body"
     hx-push-url="true"
-    hx-indicator="#loading"
   >
     <div class="mb-4">
       <label for="poll_request" class="block text-lg font-medium"
@@ -24,16 +23,18 @@
       <button
         type="submit"
         id="submit-btn"
-        class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-lg font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+        class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-lg font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        hx-disabled-elt="this"
       >
-        Create Poll
+        <span class="htmx-indicator-hide">Create Poll</span>
+        <span class="htmx-indicator">
+          <svg class="animate-spin inline h-5 w-5 text-white mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          Creating...
+        </span>
       </button>
-      <div
-        id="loading"
-        class="htmx-indicator mt-4 text-center text-blue-600 font-semibold"
-      >
-        Submitting...
-      </div>
     </div>
   </form>
 </div>

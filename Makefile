@@ -121,7 +121,7 @@ stop-minio: ## Stop Minio storage server
 PORT_FORWARD_WEB_CMD := "kubectl port-forward service/temporal-web 8081:8080"
 PORT_FORWARD_FRONTEND_CMD := "kubectl port-forward service/temporal-frontend 7233:7233"
 
-start-dev-session: stop-dev-session build ## Start (or restart) the tmux development session
+start-dev-session: stop-dev-session start-minio build ## Start (or restart) the tmux development session
 	@$(call setup_env, .env.dev)
 	@command -v tmux >/dev/null 2>&1 || { echo >&2 "tmux is not installed. Aborting."; exit 1; }
 	@command -v kubectl >/dev/null 2>&1 || { echo >&2 "kubectl is not installed. Aborting."; exit 1; }

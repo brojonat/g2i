@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"regexp"
 	"runtime/debug"
 	"strconv"
@@ -680,6 +679,7 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 		config := PollConfig{
 			Question:        parsedRequest.Question,
 			AllowedOptions:  parsedRequest.Usernames,
+			Usernames:       parsedRequest.Usernames, // Pass usernames for image generation
 			DurationSeconds: duration,
 			SingleVote:      false,
 			StartBlocked:    false,
@@ -709,95 +709,7 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 
 		s.logger.Info("successfully started poll workflow", "workflow_id", workflowID)
 
-		// Kick off image orchestration in the background.
-		// This includes listing existing creators, copying existing images, and starting generation workflows.
-		// By doing this asynchronously, the user gets redirected immediately to the payment page.
-		go func() {
-			// Get a list of all users who already have generated content.
-			existingCreators, err := s.storageProvider.ListTopLevelFolders(context.Background(), s.cfg.StorageBucket)
-			if err != nil {
-				s.logger.Error("failed to list existing creators", "error", err)
-				existingCreators = []string{}
-			}
-
-			// Create a set for quick lookups.
-			existingCreatorsSet := make(map[string]struct{})
-			for _, creator := range existingCreators {
-				existingCreatorsSet[creator] = struct{}{}
-			}
-
-			// Separate users who need image generation from those who have existing images.
-			filteredUsernames := []string{}
-			existingUsernames := []string{}
-			for _, username := range parsedRequest.Usernames {
-				if _, exists := existingCreatorsSet[username]; !exists {
-					filteredUsernames = append(filteredUsernames, username)
-				} else {
-					existingUsernames = append(existingUsernames, username)
-				}
-			}
-
-			// Log the operation summary
-			if len(existingUsernames) > 0 {
-				s.logger.Info("copying existing images", "count", len(existingUsernames), "users", existingUsernames)
-			}
-
-			// For users who already have images, copy their latest image to the poll's folder in the background.
-			for _, username := range existingUsernames {
-				go func(user string) {
-					bucket := s.cfg.StorageBucket
-
-					latestKey, err := s.storageProvider.GetLatestObjectKeyForUser(context.Background(), bucket, user)
-					if err != nil {
-						log.Printf("Failed to find latest image for user %s: %v", user, err)
-						return
-					}
-
-					parts := strings.Split(latestKey, "/")
-					filename := parts[len(parts)-1]
-					fileExt := strings.TrimPrefix(path.Ext(filename), ".")
-					dstKey := fmt.Sprintf("%s/%s.%s", workflowID, user, fileExt)
-
-					err = s.storageProvider.Copy(context.Background(), bucket, latestKey, bucket, dstKey)
-					if err != nil {
-						log.Printf("Failed to copy image for user %s to poll folder: %v", user, err)
-					} else {
-						log.Printf("Successfully copied existing image for user %s to poll folder", user)
-					}
-				}(username)
-			}
-
-			// After the poll is created, kick off the content generation workflows for each new user.
-			if len(filteredUsernames) > 0 {
-				s.logger.Info("starting image generation", "count", len(filteredUsernames), "users", filteredUsernames)
-
-				baseInput := AppInput{
-					ModelName:                     s.cfg.GeminiModel,
-					ResearchAgentSystemPrompt:     s.cfg.ResearchAgentPrompt,
-					ContentGenerationSystemPrompt: s.cfg.ContentGenerationPrompt,
-					StorageProvider:               s.cfg.StorageProvider,
-					StorageBucket:                 s.cfg.StorageBucket,
-					ImageFormat:                   s.cfg.ImageFormat,
-					ImageWidth:                    s.cfg.ImageWidth,
-					ImageHeight:                   s.cfg.ImageHeight,
-				}
-
-				workflowInput := PollImageGenerationInput{
-					Usernames: filteredUsernames,
-					PollID:    workflowID,
-					AppInput:  baseInput,
-				}
-
-				imageGenWorkflowID := "g2i-poll-image-generation-" + workflowID
-				_, err := StartPollImageGenerationWorkflow(s.temporalClient, s.cfg, imageGenWorkflowID, workflowInput)
-				if err != nil {
-					log.Printf("Failed to start poll image generation workflow %s: %v", imageGenWorkflowID, err)
-				} else {
-					log.Printf("Successfully started poll image generation workflow %s", imageGenWorkflowID)
-				}
-			}
-		}()
-
+		// Image generation is now handled as a child workflow inside PollWorkflow
 		// Redirect immediately - user doesn't need to wait for image orchestration
 		w.Header().Set("HX-Redirect", "/poll/"+workflowID)
 		w.WriteHeader(http.StatusOK)
@@ -952,10 +864,13 @@ func (s *APIServer) handleGetPollProfile() http.Handler {
 
 		key := fmt.Sprintf("%s/%s.%s", workflowID, option, imageFormat)
 
+		s.logger.Debug("Checking for poll image", "bucket", bucket, "key", key, "workflowID", workflowID, "option", option, "imageFormat", imageFormat)
+
 		// Stat returns the public URL if the image exists
 		imageURL, err := s.storageProvider.Stat(r.Context(), bucket, key)
 		if err != nil {
 			// If the image doesn't exist, return the spinner partial
+			s.logger.Debug("Image not found, returning spinner", "bucket", bucket, "key", key, "error", err)
 			data := map[string]interface{}{
 				"WorkflowID": workflowID,
 				"Option":     option,
@@ -966,6 +881,8 @@ func (s *APIServer) handleGetPollProfile() http.Handler {
 			}
 			return
 		}
+
+		s.logger.Debug("Image found", "bucket", bucket, "key", key, "imageURL", imageURL)
 
 		// If the image exists, return the image partial
 		data := map[string]interface{}{

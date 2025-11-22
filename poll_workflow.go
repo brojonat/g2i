@@ -16,6 +16,7 @@ type PollConfig struct {
 	DurationSeconds int      // if 0, the poll will run indefinitely
 	StartBlocked    bool     // if true, the poll will not start until a start_poll signal is received
 	SingleVote      bool     // if true, a user can only vote once
+	Usernames       []string // GitHub usernames to generate images for
 	// Payment-related fields
 	PaymentRequired bool    // if true, poll requires payment before accepting votes
 	PaymentWallet   string  // Solana wallet address to receive payment
@@ -154,6 +155,7 @@ func PollWorkflow(ctx workflow.Context, config PollConfig) (PollSummary, error) 
 		// Execute the WaitForPayment activity
 		activityOptions := workflow.ActivityOptions{
 			StartToCloseTimeout: 7 * 24 * time.Hour, // Max 7 days to receive payment
+			HeartbeatTimeout:    2 * time.Minute,    // Detect dead workers within 2 minutes
 		}
 		activityCtx := workflow.WithActivityOptions(ctx, activityOptions)
 
@@ -182,6 +184,37 @@ func PollWorkflow(ctx workflow.Context, config PollConfig) (PollSummary, error) 
 		logger.Info("Payment received! Poll is now accepting votes.",
 			"transactionID", paymentOutput.TransactionID,
 			"amount", paymentOutput.Amount)
+	}
+
+	// Start image generation workflow as a child
+	if len(config.Usernames) > 0 {
+		logger.Info("Starting image generation child workflow", "usernames", config.Usernames)
+
+		childWorkflowOptions := workflow.ChildWorkflowOptions{
+			WorkflowID: "g2i-poll-image-generation-" + workflow.GetInfo(ctx).WorkflowExecution.ID,
+		}
+		childCtx := workflow.WithChildOptions(ctx, childWorkflowOptions)
+
+		imageGenInput := PollImageGenerationInput{
+			Usernames: config.Usernames,
+			PollID:    workflow.GetInfo(ctx).WorkflowExecution.ID,
+			AppInput: AppInput{
+				ModelName:                     appConfig.GeminiModel,
+				ResearchAgentSystemPrompt:     appConfig.ResearchAgentPrompt,
+				ContentGenerationSystemPrompt: appConfig.ContentGenerationPrompt,
+				StorageProvider:               appConfig.StorageProvider,
+				StorageBucket:                 appConfig.StorageBucket,
+				ImageFormat:                   appConfig.ImageFormat,
+				ImageWidth:                    appConfig.ImageWidth,
+				ImageHeight:                   appConfig.ImageHeight,
+			},
+		}
+
+		_ = workflow.ExecuteChildWorkflow(childCtx, GeneratePollImagesWorkflow, imageGenInput)
+
+		// Don't wait for image generation to complete - let it run in background
+		// The workflow can continue accepting votes while images are being generated
+		logger.Info("Image generation workflow started in background")
 	}
 
 	var timerFuture workflow.Future

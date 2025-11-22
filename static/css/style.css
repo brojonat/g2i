@@ -180,6 +180,19 @@ footer {
     justify-content: center;
 }
 
+/* HTMX Indicator Styles */
+.htmx-indicator {
+    display: none;
+}
+
+.htmx-request .htmx-indicator {
+    display: inline;
+}
+
+.htmx-request .htmx-indicator-hide {
+    display: none;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .main-content-grid {
