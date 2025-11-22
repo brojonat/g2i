@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -44,15 +43,15 @@ type S3CompatibleStorage struct {
 }
 
 // NewS3CompatibleStorage creates a new S3-compatible storage instance
-func NewS3CompatibleStorage() *S3CompatibleStorage {
+func NewS3CompatibleStorage(cfg *Config) *S3CompatibleStorage {
 	return &S3CompatibleStorage{
-		Platform:       os.Getenv("S3_PLATFORM"),
-		Endpoint:       os.Getenv("S3_ENDPOINT"),
-		PublicEndpoint: os.Getenv("S3_PUBLIC_ENDPOINT"),
-		Region:         os.Getenv("S3_REGION"),
-		AccessKey:      os.Getenv("S3_ACCESS_KEY"),
-		SecretKey:      os.Getenv("S3_SECRET_KEY"),
-		UseSSL:         os.Getenv("S3_USE_SSL") == "true",
+		Platform:       cfg.S3Platform,
+		Endpoint:       cfg.S3Endpoint,
+		PublicEndpoint: cfg.S3PublicEndpoint,
+		Region:         cfg.S3Region,
+		AccessKey:      cfg.S3AccessKey,
+		SecretKey:      cfg.S3SecretKey,
+		UseSSL:         cfg.S3UseSSL,
 	}
 }
 
@@ -382,11 +381,11 @@ type S3Storage struct {
 }
 
 // NewS3Storage creates a new S3 storage instance
-func NewS3Storage() *S3Storage {
+func NewS3Storage(cfg *Config) *S3Storage {
 	return &S3Storage{
-		Region:    os.Getenv("AWS_REGION"),
-		AccessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
-		SecretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		Region:    cfg.AWSRegion,
+		AccessKey: cfg.AWSAccessKey,
+		SecretKey: cfg.AWSSecretKey,
 	}
 }
 
@@ -452,10 +451,10 @@ type GCSStorage struct {
 }
 
 // NewGCSStorage creates a new GCS storage instance
-func NewGCSStorage() *GCSStorage {
+func NewGCSStorage(cfg *Config) *GCSStorage {
 	return &GCSStorage{
-		ProjectID:       os.Getenv("GCS_PROJECT_ID"),
-		CredentialsPath: os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+		ProjectID:       cfg.GCSProjectID,
+		CredentialsPath: cfg.GCSCredentialsPath,
 	}
 }
 
@@ -515,18 +514,18 @@ func (g *GCSStorage) Stat(ctx context.Context, bucket, key string) (string, erro
 }
 
 // NewObjectStorage creates a new ObjectStorage instance based on the provider
-func NewObjectStorage(provider string) ObjectStorage {
-	switch strings.ToLower(provider) {
+func NewObjectStorage(cfg *Config) ObjectStorage {
+	switch strings.ToLower(cfg.StorageProvider) {
 	case "aws-s3":
-		return NewS3Storage()
+		return NewS3Storage(cfg)
 	case "gcs":
-		return NewGCSStorage()
+		return NewGCSStorage(cfg)
 	case "s3":
 		fallthrough
 	case "minio":
 		fallthrough
 	default:
-		return NewS3CompatibleStorage()
+		return NewS3CompatibleStorage(cfg)
 	}
 }
 

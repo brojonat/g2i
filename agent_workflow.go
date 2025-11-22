@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -93,9 +92,9 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 		var actErr error
 
 		cfg := OpenAIConfig{
-			APIKey:  os.Getenv("RESEARCH_ORCHESTRATOR_LLM_API_KEY"),
-			Model:   os.Getenv("RESEARCH_ORCHESTRATOR_LLM_MODEL"),
-			APIHost: os.Getenv("RESEARCH_ORCHESTRATOR_LLM_BASE_URL"),
+			APIKey:  appConfig.ResearchOrchestratorAPIKey,
+			Model:   appConfig.ResearchOrchestratorModel,
+			APIHost: appConfig.ResearchOrchestratorBaseURL,
 		}
 
 		if previousResponseID == "" {

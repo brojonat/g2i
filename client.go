@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"go.temporal.io/api/enums/v1"
@@ -13,10 +12,10 @@ import (
 )
 
 // StartWorkflow starts a new content generation workflow
-func StartWorkflow(c client.Client, input AppInput) (string, error) {
+func StartWorkflow(c client.Client, cfg *Config, input AppInput) (string, error) {
 	workflowOptions := client.StartWorkflowOptions{
 		ID:        fmt.Sprintf("content-generation-%s", input.GitHubUsername),
-		TaskQueue: os.Getenv("TEMPORAL_TASK_QUEUE"),
+		TaskQueue: cfg.TemporalTaskQueue,
 	}
 
 	workflowRun, err := c.ExecuteWorkflow(context.Background(), workflowOptions, RunContentGenerationWorkflow, input)
@@ -61,10 +60,10 @@ func GetWorkflowDescription(c client.Client, workflowID string) (*workflowservic
 }
 
 // StartPollWorkflow starts the poll workflow.
-func StartPollWorkflow(c client.Client, workflowID string, config PollConfig) (client.WorkflowRun, error) {
+func StartPollWorkflow(c client.Client, cfg *Config, workflowID string, config PollConfig) (client.WorkflowRun, error) {
 	options := client.StartWorkflowOptions{
 		ID:                    workflowID,
-		TaskQueue:             os.Getenv("TEMPORAL_TASK_QUEUE"),
+		TaskQueue:             cfg.TemporalTaskQueue,
 		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 	}
 
@@ -78,10 +77,10 @@ func StartPollWorkflow(c client.Client, workflowID string, config PollConfig) (c
 }
 
 // StartPollImageGenerationWorkflow starts the poll image generation workflow.
-func StartPollImageGenerationWorkflow(c client.Client, workflowID string, input PollImageGenerationInput) (client.WorkflowRun, error) {
+func StartPollImageGenerationWorkflow(c client.Client, cfg *Config, workflowID string, input PollImageGenerationInput) (client.WorkflowRun, error) {
 	options := client.StartWorkflowOptions{
 		ID:                    workflowID,
-		TaskQueue:             os.Getenv("TEMPORAL_TASK_QUEUE"),
+		TaskQueue:             cfg.TemporalTaskQueue,
 		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 	}
 
@@ -264,7 +263,7 @@ func ExampleUsage() {
 	}
 
 	// Start workflow
-	workflowID, err := StartWorkflow(c, input)
+	workflowID, err := StartWorkflow(c, appConfig, input)
 	if err != nil {
 		log.Fatalln("Failed to start workflow", err)
 	}

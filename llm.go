@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"reflect"
 	"strings"
 )
@@ -266,9 +265,9 @@ func generateJSONResponse(ctx context.Context, p OpenAIConfig, prompt, userInput
 // ParsePollRequestWithLLM uses an LLM to parse a natural language poll request
 // into a structured format.
 func ParsePollRequestWithLLM(ctx context.Context, p OpenAIConfig, pollRequest string) (ParsedPollRequest, error) {
-	prompt := os.Getenv("POLL_PARSER_SYSTEM_PROMPT")
+	prompt := appConfig.PollParserPrompt
 	if prompt == "" {
-		return ParsedPollRequest{}, fmt.Errorf("POLL_PARSER_SYSTEM_PROMPT environment variable not set")
+		return ParsedPollRequest{}, fmt.Errorf("POLL_PARSER_SYSTEM_PROMPT not configured")
 	}
 
 	var parsedRequest ParsedPollRequest

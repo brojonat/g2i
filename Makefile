@@ -48,18 +48,71 @@ run-app: build
 		echo "Error: .env.dev file not found. Please create one from env.example and fill in the required values."; \
 		exit 1; \
 	fi
-	@echo "Updating prompts in .env.dev file..."
-	@# Remove old prompt variables to prevent duplication
-	@grep -vE '_SYSTEM_PROMPT=' .env.dev > .env.tmp && mv .env.tmp .env.dev
-	@$(MAKE) --no-print-directory generate-prompts >> .env.dev
+	@./scripts/update-prompts.py .env.dev
 	@$(call setup_env, .env.dev)
 	@echo "⏳ Waiting for Temporal frontend (port 7233) to be ready...";
-	@while ! nc -z 127.0.0.1 7233; do \
+	@while ! bash -c "echo > /dev/tcp/127.0.0.1/7233" 2>/dev/null; do \
 	  sleep 0.5; \
 	done;
 	@echo "✅ Temporal frontend is ready.";
 	@echo "🚀 Starting development server with hot reloading...";
 	@air
+
+# Run just the server (for tmux session) with hot-reload
+run-server: build
+	@if [ ! -f .env.dev ]; then \
+		echo "Error: .env.dev file not found."; \
+		exit 1; \
+	fi
+	@./scripts/update-prompts.py .env.dev
+	@$(call setup_env, .env.dev)
+	@export S3_PUBLIC_ENDPOINT=$$(./scripts/set-dev-endpoint.sh 2>/dev/null || echo "localhost:9000"); \
+	echo "📍 Using S3_PUBLIC_ENDPOINT=$$S3_PUBLIC_ENDPOINT"; \
+	echo "⏳ Waiting for Temporal frontend (port 7233) to be ready..."; \
+	while ! bash -c "echo > /dev/tcp/127.0.0.1/7233" 2>/dev/null; do \
+	  sleep 0.5; \
+	done; \
+	echo "✅ Temporal frontend is ready."; \
+	echo "🚀 Starting server with hot-reload..."; \
+	air -c .air.server.toml
+
+# Run just the worker (for tmux session) with hot-reload
+run-worker: build
+	@if [ ! -f .env.dev ]; then \
+		echo "Error: .env.dev file not found."; \
+		exit 1; \
+	fi
+	@./scripts/update-prompts.py .env.dev
+	@$(call setup_env, .env.dev)
+	@echo "⏳ Waiting for Temporal frontend (port 7233) to be ready...";
+	@while ! bash -c "echo > /dev/tcp/127.0.0.1/7233" 2>/dev/null; do \
+	  sleep 0.5; \
+	done;
+	@echo "✅ Temporal frontend is ready.";
+	@echo "🚀 Starting worker with hot-reload...";
+	@air -c .air.worker.toml
+
+# Local Services (Docker Compose)
+# --------------------------------
+.PHONY: start-minio stop-minio
+
+start-minio: ## Start Minio storage server (Docker Compose)
+	@echo "🚀 Starting Minio..."
+	@docker compose up -d minio
+	@echo "⏳ Waiting for Minio to be ready..."
+	@sleep 5
+	@echo "📦 Creating bucket 'github-visualizer'..."
+	@docker exec minio mc alias set local http://localhost:9000 minioadmin minioadmin >/dev/null 2>&1 || true
+	@docker exec minio mc mb local/github-visualizer >/dev/null 2>&1 || echo "   (Bucket already exists)"
+	@echo "🔓 Making bucket publicly readable..."
+	@docker exec minio mc anonymous set download local/github-visualizer >/dev/null 2>&1
+	@echo "✅ Minio is running on:"
+	@echo "   API: http://localhost:9000"
+	@echo "   Console: http://localhost:9001 (login: minioadmin/minioadmin)"
+
+stop-minio: ## Stop Minio storage server
+	@echo "🛑 Stopping Minio..."
+	@docker compose down
 
 # Tmux Development Session
 # ------------------------
@@ -74,14 +127,24 @@ start-dev-session: stop-dev-session build ## Start (or restart) the tmux develop
 	@command -v kubectl >/dev/null 2>&1 || { echo >&2 "kubectl is not installed. Aborting."; exit 1; }
 	@mkdir -p logs
 	@echo "Starting tmux development session: $(TMUX_SESSION)"
-	@tmux new-session -d -s $(TMUX_SESSION) -n 'App'
+	@tmux new-session -d -s $(TMUX_SESSION) -n 'Server'
+	@tmux new-window -d -t $(TMUX_SESSION) -n 'Worker'
+	@tmux new-window -d -t $(TMUX_SESSION) -n 'CLI'
 	@tmux new-window -d -t $(TMUX_SESSION) -n 'TemporalWeb' "$(PORT_FORWARD_WEB_CMD)"
 	@tmux new-window -d -t $(TMUX_SESSION) -n 'TemporalFrontend' "$(PORT_FORWARD_FRONTEND_CMD)"
 	@sleep 1
-	@tmux send-keys -t $(TMUX_SESSION):App "(make run-app) 2>&1 | tee logs/app.log" C-m
-	@tmux split-window -h -t $(TMUX_SESSION):App
-	@tmux send-keys -t $(TMUX_SESSION):App 'echo "CLI Pane"' C-m
+	@tmux send-keys -t $(TMUX_SESSION):Server "(make run-server) 2>&1 | tee logs/server.log" C-m
+	@tmux send-keys -t $(TMUX_SESSION):Worker "(make run-worker) 2>&1 | tee logs/worker.log" C-m
 	@echo "✅ Tmux session '$(TMUX_SESSION)' started."
+	@echo ""
+	@echo "Windows:"
+	@echo "  1: Server  - HTTP API server (logs/server.log)"
+	@echo "  2: Worker  - Temporal worker (logs/worker.log)"
+	@echo "  3: CLI     - Command line interface"
+	@echo "  4: TemporalWeb - Temporal UI (http://localhost:8081)"
+	@echo "  5: TemporalFrontend - Port forward (localhost:7233)"
+	@echo ""
+	@echo "Navigate: Ctrl+b <window number>"
 	@echo "Attach with: tmux attach-session -t $(TMUX_SESSION)"
 	@echo "Kill with: make stop-dev-session"
 	@if [ -t 0 ]; then \
@@ -123,10 +186,7 @@ build-push: ## Build and push Docker image with git hash tag
 
 deploy-server: ## Deploy server to Kubernetes (prod)
 	@$(MAKE) build-push
-	@echo "Updating prompts in .env.prod file..."
-	@# Remove old prompt variables to prevent duplication
-	@grep -vE '_SYSTEM_PROMPT=' .env.prod > .env.tmp && mv .env.tmp .env.prod
-	@$(MAKE) --no-print-directory generate-prompts >> .env.prod
+	@./scripts/update-prompts.py .env.prod
 	@GIT_HASH=$$(cat .git_hash); \
 	echo "Applying server deployment with image: $(DOCKER_REPO):$$GIT_HASH"; \
 	kustomize build --load-restrictor=LoadRestrictionsNone server/k8s/prod | \
@@ -136,10 +196,7 @@ deploy-server: ## Deploy server to Kubernetes (prod)
 
 deploy-worker: ## Deploy worker to Kubernetes (prod)
 	@$(MAKE) build-push
-	@echo "Updating prompts in .env.prod file..."
-	@# Remove old prompt variables to prevent duplication
-	@grep -vE '_SYSTEM_PROMPT=' .env.prod > .env.tmp && mv .env.tmp .env.prod
-	@$(MAKE) --no-print-directory generate-prompts >> .env.prod
+	@./scripts/update-prompts.py .env.prod
 	@GIT_HASH=$$(cat .git_hash); \
 	echo "Applying worker deployment with image: $(DOCKER_REPO):$$GIT_HASH"; \
 	kustomize build --load-restrictor=LoadRestrictionsNone worker/k8s/prod | \

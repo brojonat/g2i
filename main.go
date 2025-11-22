@@ -18,8 +18,20 @@ import (
 	"go.temporal.io/sdk/worker"
 )
 
+// appConfig is the global application configuration, loaded once at startup
+var appConfig *Config
+
 func main() {
 	stdlog.Println("Application starting up...")
+
+	// Load and validate configuration
+	cfg, err := LoadConfig()
+	if err != nil {
+		stdlog.Fatalf("Failed to load configuration: %v", err)
+	}
+	appConfig = cfg // Set global config
+	stdlog.Println("Configuration loaded and validated successfully")
+
 	// Setup signal handling for graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -33,12 +45,12 @@ func main() {
 			workerCmd.Parse(os.Args[2:])
 
 			if *checkConnection {
-				checkTemporalConnection(ctx)
+				checkTemporalConnection(ctx, cfg)
 				return
 			}
-			runWorker(ctx, nil)
+			runWorker(ctx, cfg, nil)
 		case "server":
-			runServer(ctx, stop, nil)
+			runServer(ctx, stop, cfg, nil)
 		case "terminate":
 			terminateCmd := flag.NewFlagSet("terminate", flag.ExitOnError)
 			workflowID := terminateCmd.String("id", "", "workflow ID to terminate (required)")
@@ -49,7 +61,7 @@ func main() {
 				stdlog.Fatalf("workflow ID is required. Usage: %s terminate -id <workflow-id> [-reason <reason>]", os.Args[0])
 			}
 
-			c := newTemporalClient()
+			c := newTemporalClient(cfg)
 			defer c.Close()
 
 			err := TerminateWorkflow(c, *workflowID, *reason)
@@ -61,10 +73,9 @@ func main() {
 			setupBucketCmd := flag.NewFlagSet("setup-bucket", flag.ExitOnError)
 			setupBucketCmd.Parse(os.Args[2:])
 
-			provider := os.Getenv("STORAGE_PROVIDER")
-			bucket := os.Getenv("STORAGE_BUCKET")
+			bucket := cfg.StorageBucket
 
-			storage := NewObjectStorage(provider)
+			storage := NewObjectStorage(cfg)
 			s3Storage, ok := storage.(*S3CompatibleStorage)
 			if !ok {
 				stdlog.Fatalf("setup-bucket only works with S3-compatible storage")
@@ -84,25 +95,25 @@ func main() {
 		wg.Add(2)
 
 		stdlog.Println("🚀 Starting server and worker for development...")
-		go runWorker(ctx, &wg)
-		runServer(ctx, stop, &wg)
+		go runWorker(ctx, cfg, &wg)
+		runServer(ctx, stop, cfg, &wg)
 
 		wg.Wait()
 		stdlog.Println("All services shut down.")
 	}
 }
 
-func runWorker(ctx context.Context, wg *sync.WaitGroup) {
+func runWorker(ctx context.Context, cfg *Config, wg *sync.WaitGroup) {
 	if wg != nil {
 		defer wg.Done()
 	}
 
 	// Create Temporal client
-	c := newTemporalClient()
+	c := newTemporalClient(cfg)
 	defer c.Close()
 
 	// Create worker
-	w := worker.New(c, os.Getenv("TEMPORAL_TASK_QUEUE"), worker.Options{})
+	w := worker.New(c, cfg.TemporalTaskQueue, worker.Options{})
 
 	// Register workflows and activities
 	w.RegisterWorkflow(RunContentGenerationWorkflow)
@@ -126,25 +137,24 @@ func runWorker(ctx context.Context, wg *sync.WaitGroup) {
 	stdlog.Println("Worker shut down.")
 }
 
-func runServer(ctx context.Context, stop context.CancelFunc, wg *sync.WaitGroup) {
+func runServer(ctx context.Context, stop context.CancelFunc, cfg *Config, wg *sync.WaitGroup) {
 	if wg != nil {
 		defer wg.Done()
 	}
 
 	// Create Temporal client
-	c := newTemporalClient()
+	c := newTemporalClient(cfg)
 	defer c.Close()
 
 	// Create API server
-	provider := os.Getenv("STORAGE_PROVIDER")
-	storage := NewObjectStorage(provider)
-	apiServer := NewAPIServer(c, storage)
+	storage := NewObjectStorage(cfg)
+	apiServer := NewAPIServer(c, storage, cfg)
 
 	// Setup routes
 	apiServer = apiServer.SetupRoutes()
 
 	// Start server
-	port := os.Getenv("PORT")
+	port := cfg.Port
 
 	// Start server in a goroutine
 	go func() {
@@ -172,9 +182,9 @@ func runServer(ctx context.Context, stop context.CancelFunc, wg *sync.WaitGroup)
 	stdlog.Println("Server exiting")
 }
 
-func checkTemporalConnection(ctx context.Context) {
+func checkTemporalConnection(ctx context.Context, cfg *Config) {
 	stdlog.Println("Checking Temporal connection...")
-	c := newTemporalClient()
+	c := newTemporalClient(cfg)
 	defer c.Close()
 
 	// Use CheckHealth for a more robust connection check
@@ -188,19 +198,15 @@ func checkTemporalConnection(ctx context.Context) {
 	stdlog.Println("Temporal connection health check successful.")
 }
 
-func newTemporalClient() client.Client {
+func newTemporalClient(cfg *Config) client.Client {
 	var c client.Client
 	var err error
 
 	// Configure a logger for the Temporal client
 	temporalLogger := log.NewStructuredLogger(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-	hostPort := os.Getenv("TEMPORAL_HOST")
-	if hostPort == "" {
-		hostPort = "localhost:7233"
-	}
 	clientOptions := client.Options{
-		HostPort:  hostPort,
-		Namespace: "default",
+		HostPort:  cfg.TemporalHost,
+		Namespace: cfg.TemporalNamespace,
 		Logger:    temporalLogger,
 	}
 

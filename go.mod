@@ -1,9 +1,9 @@
 module github.com/brojonat/github-to-img-to-invitational-poll
 
-go 1.25.1
+go 1.25.4
 
 require (
-	github.com/brojonat/forohtoo v0.0.0-20251024021630-bdb8d687d86b
+	github.com/brojonat/forohtoo v0.0.0-20251115224914-a5a588b88dfb
 	github.com/chai2010/webp v1.4.0
 	github.com/minio/minio-go/v7 v7.0.71
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646

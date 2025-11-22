@@ -148,13 +148,14 @@ func (r *TemplateRenderer) RenderWithRequest(w http.ResponseWriter, req *http.Re
 type APIServer struct {
 	temporalClient  client.Client
 	storageProvider ObjectStorage
+	cfg             *Config
 	renderer        *TemplateRenderer
 	logger          *slog.Logger
 	server          *http.Server
 }
 
 // NewAPIServer creates a new API server
-func NewAPIServer(temporalClient client.Client, storageProvider ObjectStorage) *APIServer {
+func NewAPIServer(temporalClient client.Client, storageProvider ObjectStorage, cfg *Config) *APIServer {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
@@ -167,6 +168,7 @@ func NewAPIServer(temporalClient client.Client, storageProvider ObjectStorage) *
 	return &APIServer{
 		temporalClient:  temporalClient,
 		storageProvider: storageProvider,
+		cfg:             cfg,
 		renderer:        renderer,
 		logger:          logger,
 	}
@@ -236,19 +238,6 @@ func (s *APIServer) Start(addr string) error {
 func (s *APIServer) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down HTTP server")
 	return s.server.Shutdown(ctx)
-}
-
-// getEnvB64 reads a base64-encoded environment variable and returns the decoded string.
-func getEnvB64(key string) string {
-	val := os.Getenv(key)
-	if val == "" {
-		return ""
-	}
-	decoded, err := base64.StdEncoding.DecodeString(val)
-	if err != nil {
-		return ""
-	}
-	return string(decoded)
 }
 
 // sanitizeWorkflowID sanitizes a string for use as a workflow ID.
@@ -490,34 +479,23 @@ func (s *APIServer) handleStartContentGeneration() http.Handler {
 			return
 		}
 
-		width, err := strconv.Atoi(os.Getenv("IMAGE_WIDTH"))
-		if err != nil {
-			s.writeInternalError(w, r, err.Error())
-			return
-		}
-		height, err := strconv.Atoi(os.Getenv("IMAGE_HEIGHT"))
-		if err != nil {
-			s.writeInternalError(w, r, err.Error())
-			return
-		}
-
 		input := AppInput{
 			GitHubUsername:                githubUsername,
 			ModelName:                     modelName,
-			ResearchAgentSystemPrompt:     getEnvB64("RESEARCH_AGENT_SYSTEM_PROMPT"),
-			ContentGenerationSystemPrompt: getEnvB64("CONTENT_GENERATION_SYSTEM_PROMPT"),
-			StorageProvider:               os.Getenv("STORAGE_PROVIDER"),
-			StorageBucket:                 os.Getenv("STORAGE_BUCKET"),
-			ImageFormat:                   os.Getenv("IMAGE_FORMAT"),
-			ImageWidth:                    width,
-			ImageHeight:                   height,
+			ResearchAgentSystemPrompt:     s.cfg.ResearchAgentPrompt,
+			ContentGenerationSystemPrompt: s.cfg.ContentGenerationPrompt,
+			StorageProvider:               s.cfg.StorageProvider,
+			StorageBucket:                 s.cfg.StorageBucket,
+			ImageFormat:                   s.cfg.ImageFormat,
+			ImageWidth:                    s.cfg.ImageWidth,
+			ImageHeight:                   s.cfg.ImageHeight,
 		}
 
 		if input.ModelName == "" {
-			input.ModelName = os.Getenv("GEMINI_MODEL")
+			input.ModelName = s.cfg.GeminiModel
 		}
 
-		_, err = StartWorkflow(s.temporalClient, input)
+		_, err := StartWorkflow(s.temporalClient, s.cfg, input)
 		if err != nil {
 			s.writeInternalError(w, r, err.Error())
 			return
@@ -684,9 +662,9 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 		parsedRequest, err := ParsePollRequestWithLLM(
 			r.Context(),
 			OpenAIConfig{
-				APIKey:  os.Getenv("RESEARCH_ORCHESTRATOR_LLM_API_KEY"),
-				Model:   os.Getenv("RESEARCH_ORCHESTRATOR_LLM_MODEL"),
-				APIHost: os.Getenv("RESEARCH_ORCHESTRATOR_LLM_BASE_URL"),
+				APIKey:  s.cfg.ResearchOrchestratorAPIKey,
+				Model:   s.cfg.ResearchOrchestratorModel,
+				APIHost: s.cfg.ResearchOrchestratorBaseURL,
 			},
 			pollRequest,
 		)
@@ -699,15 +677,6 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 		// All polls run for one week.
 		duration := 604800 // 7 * 24 * 60 * 60
 
-		// Parse payment configuration
-		paymentWallet := os.Getenv("PAYMENT_WALLET_ADDRESS")
-		paymentAmount := 0.01 // default
-		if envAmount := os.Getenv("PAYMENT_AMOUNT"); envAmount != "" {
-			if parsed, err := strconv.ParseFloat(envAmount, 64); err == nil {
-				paymentAmount = parsed
-			}
-		}
-
 		config := PollConfig{
 			Question:        parsedRequest.Question,
 			AllowedOptions:  parsedRequest.Usernames,
@@ -715,15 +684,15 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 			SingleVote:      false,
 			StartBlocked:    false,
 			// Payment configuration
-			PaymentRequired: paymentWallet != "", // Only require payment if wallet is configured
-			PaymentWallet:   paymentWallet,
-			PaymentAmount:   paymentAmount,
+			PaymentRequired: s.cfg.PaymentWalletAddr != "", // Only require payment if wallet is configured
+			PaymentWallet:   s.cfg.PaymentWalletAddr,
+			PaymentAmount:   s.cfg.PaymentAmount,
 		}
 
 		// Generate a unique ID for the workflow from the poll question.
 		workflowID := "g2i-poll-" + sanitizeWorkflowID(parsedRequest.Question)
 
-		_, err = StartPollWorkflow(s.temporalClient, workflowID, config)
+		_, err = StartPollWorkflow(s.temporalClient, s.cfg, workflowID, config)
 		if err != nil {
 			// If the workflow already exists, it's not an error.
 			var workflowExistsErr *serviceerror.WorkflowExecutionAlreadyStarted
@@ -745,7 +714,7 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 		// By doing this asynchronously, the user gets redirected immediately to the payment page.
 		go func() {
 			// Get a list of all users who already have generated content.
-			existingCreators, err := s.storageProvider.ListTopLevelFolders(context.Background(), os.Getenv("STORAGE_BUCKET"))
+			existingCreators, err := s.storageProvider.ListTopLevelFolders(context.Background(), s.cfg.StorageBucket)
 			if err != nil {
 				s.logger.Error("failed to list existing creators", "error", err)
 				existingCreators = []string{}
@@ -776,7 +745,7 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 			// For users who already have images, copy their latest image to the poll's folder in the background.
 			for _, username := range existingUsernames {
 				go func(user string) {
-					bucket := os.Getenv("STORAGE_BUCKET")
+					bucket := s.cfg.StorageBucket
 
 					latestKey, err := s.storageProvider.GetLatestObjectKeyForUser(context.Background(), bucket, user)
 					if err != nil {
@@ -802,17 +771,15 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 			if len(filteredUsernames) > 0 {
 				s.logger.Info("starting image generation", "count", len(filteredUsernames), "users", filteredUsernames)
 
-				width, _ := strconv.Atoi(os.Getenv("IMAGE_WIDTH"))
-				height, _ := strconv.Atoi(os.Getenv("IMAGE_HEIGHT"))
 				baseInput := AppInput{
-					ModelName:                     os.Getenv("GEMINI_MODEL"),
-					ResearchAgentSystemPrompt:     getEnvB64("RESEARCH_AGENT_SYSTEM_PROMPT"),
-					ContentGenerationSystemPrompt: getEnvB64("CONTENT_GENERATION_SYSTEM_PROMPT"),
-					StorageProvider:               os.Getenv("STORAGE_PROVIDER"),
-					StorageBucket:                 os.Getenv("STORAGE_BUCKET"),
-					ImageFormat:                   os.Getenv("IMAGE_FORMAT"),
-					ImageWidth:                    width,
-					ImageHeight:                   height,
+					ModelName:                     s.cfg.GeminiModel,
+					ResearchAgentSystemPrompt:     s.cfg.ResearchAgentPrompt,
+					ContentGenerationSystemPrompt: s.cfg.ContentGenerationPrompt,
+					StorageProvider:               s.cfg.StorageProvider,
+					StorageBucket:                 s.cfg.StorageBucket,
+					ImageFormat:                   s.cfg.ImageFormat,
+					ImageWidth:                    s.cfg.ImageWidth,
+					ImageHeight:                   s.cfg.ImageHeight,
 				}
 
 				workflowInput := PollImageGenerationInput{
@@ -822,7 +789,7 @@ func (s *APIServer) handleCreatePoll() http.Handler {
 				}
 
 				imageGenWorkflowID := "g2i-poll-image-generation-" + workflowID
-				_, err := StartPollImageGenerationWorkflow(s.temporalClient, imageGenWorkflowID, workflowInput)
+				_, err := StartPollImageGenerationWorkflow(s.temporalClient, s.cfg, imageGenWorkflowID, workflowInput)
 				if err != nil {
 					log.Printf("Failed to start poll image generation workflow %s: %v", imageGenWorkflowID, err)
 				} else {
@@ -980,11 +947,12 @@ func (s *APIServer) handleGetPollProfile() http.Handler {
 			return
 		}
 
-		bucket := os.Getenv("STORAGE_BUCKET")
-		imageFormat := os.Getenv("IMAGE_FORMAT")
+		bucket := s.cfg.StorageBucket
+		imageFormat := s.cfg.ImageFormat
 
 		key := fmt.Sprintf("%s/%s.%s", workflowID, option, imageFormat)
 
+		// Stat returns the public URL if the image exists
 		imageURL, err := s.storageProvider.Stat(r.Context(), bucket, key)
 		if err != nil {
 			// If the image doesn't exist, return the spinner partial
@@ -1125,7 +1093,7 @@ func (s *APIServer) handleDeletePoll() http.Handler {
 			return
 		}
 
-		bucket := os.Getenv("STORAGE_BUCKET")
+		bucket := s.cfg.StorageBucket
 
 		// Terminate the poll workflow
 		err := TerminateWorkflow(s.temporalClient, pollID, "Poll deleted by user")

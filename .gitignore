@@ -11,3 +11,6 @@ logs/
 .vscode/
 .git_hash
 prompts.yaml
+
+bin-server/
+bin-worker/

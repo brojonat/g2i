@@ -1,8 +1,16 @@
 {{define "content"}}
 <div class="container mx-auto px-4 py-8">
-  <h2 class="text-4xl font-bold text-center mb-8 cyber-text-glow">
-    All Polls
-  </h2>
+  <div class="flex justify-between items-center mb-8">
+    <h2 class="text-4xl font-bold cyber-text-glow">
+      All Polls
+    </h2>
+    <button
+      onclick="document.getElementById('poll-modal').classList.remove('hidden')"
+      class="px-6 py-3 bg-gradient-to-r from-cyan-600 to-pink-600 hover:from-cyan-700 hover:to-pink-700 text-white font-bold rounded-lg shadow-lg transition-all duration-300"
+    >
+      + Create Poll
+    </button>
+  </div>
 
   {{if .Polls}}
   <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -41,5 +49,68 @@
     </a>
   </div>
   {{end}}
+</div>
+
+<!-- Create Poll Modal -->
+<div id="poll-modal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+  <div class="bg-gray-900 rounded-lg shadow-xl max-w-2xl w-full mx-4 border border-cyan-500">
+    <div class="flex justify-between items-center p-6 border-b border-gray-700">
+      <h3 class="text-2xl font-bold text-white">Create New Poll</h3>
+      <button
+        onclick="document.getElementById('poll-modal').classList.add('hidden')"
+        class="text-gray-400 hover:text-white text-2xl"
+      >
+        ×
+      </button>
+    </div>
+    <div class="p-6">
+      <form
+        id="poll-form"
+        hx-post="/poll"
+        hx-target="body"
+        hx-push-url="true"
+        hx-indicator="#loading"
+      >
+        <div class="mb-4">
+          <label for="poll_request" class="block text-lg font-medium text-gray-300 mb-2">
+            Poll Request
+          </label>
+          <textarea
+            id="poll_request"
+            name="poll_request"
+            class="w-full px-4 py-3 bg-gray-800 text-white border border-gray-700 rounded-lg focus:outline-none focus:border-cyan-500"
+            rows="4"
+            placeholder="e.g., Who is the best developer: @torvalds, @gvanrossum, or @brendaneich?"
+            required
+          ></textarea>
+          <p class="text-gray-500 text-sm mt-2">
+            Mention GitHub usernames with @ to include them in the poll
+          </p>
+        </div>
+        <div class="flex gap-3">
+          <button
+            type="submit"
+            id="submit-btn"
+            class="flex-1 py-3 px-6 bg-gradient-to-r from-cyan-600 to-pink-600 hover:from-cyan-700 hover:to-pink-700 text-white font-bold rounded-lg shadow-lg transition-all duration-300"
+          >
+            Create Poll
+          </button>
+          <button
+            type="button"
+            onclick="document.getElementById('poll-modal').classList.add('hidden')"
+            class="px-6 py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 font-medium rounded-lg transition-all duration-300"
+          >
+            Cancel
+          </button>
+        </div>
+        <div
+          id="loading"
+          class="htmx-indicator mt-4 text-center text-cyan-400 font-semibold"
+        >
+          Creating poll...
+        </div>
+      </form>
+    </div>
+  </div>
 </div>
 {{end}}

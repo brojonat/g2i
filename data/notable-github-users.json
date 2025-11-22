@@ -1,0 +1,41 @@
+{
+  "language_creators": [
+    {"username": "gvanrossum", "name": "Guido van Rossum", "known_for": "Python creator"},
+    {"username": "torvalds", "name": "Linus Torvalds", "known_for": "Linux & Git creator"},
+    {"username": "brendaneich", "name": "Brendan Eich", "known_for": "JavaScript creator"},
+    {"username": "jashkenas", "name": "Jeremy Ashkenas", "known_for": "CoffeeScript creator"},
+    {"username": "tenderlove", "name": "Aaron Patterson", "known_for": "Ruby core team"},
+    {"username": "antirez", "name": "Salvatore Sanfilippo", "known_for": "Redis creator"}
+  ],
+  "framework_authors": [
+    {"username": "tj", "name": "TJ Holowaychuk", "known_for": "Express.js creator"},
+    {"username": "dhh", "name": "David Heinemeier Hansson", "known_for": "Rails creator"},
+    {"username": "yyx990803", "name": "Evan You", "known_for": "Vue.js creator"},
+    {"username": "gaearon", "name": "Dan Abramov", "known_for": "Redux creator"},
+    {"username": "jeresig", "name": "John Resig", "known_for": "jQuery creator"},
+    {"username": "sebmck", "name": "Sebastian McKenzie", "known_for": "Babel creator"}
+  ],
+  "tool_creators": [
+    {"username": "sokra", "name": "Tobias Koppers", "known_for": "Webpack creator"},
+    {"username": "mitchellh", "name": "Mitchell Hashimoto", "known_for": "Vagrant & Terraform creator"},
+    {"username": "nvie", "name": "Vincent Driessen", "known_for": "Git-flow creator"},
+    {"username": "addyosmani", "name": "Addy Osmani", "known_for": "Chrome DevTools team"}
+  ],
+  "github_founders": [
+    {"username": "defunkt", "name": "Chris Wanstrath", "known_for": "GitHub co-founder"},
+    {"username": "pjhyett", "name": "PJ Hyett", "known_for": "GitHub co-founder"},
+    {"username": "mojombo", "name": "Tom Preston-Werner", "known_for": "GitHub co-founder, Jekyll creator"}
+  ],
+  "oss_legends": [
+    {"username": "sindresorhus", "name": "Sindre Sorhus", "known_for": "Prolific OSS contributor (1000+ packages)"},
+    {"username": "kelseyhightower", "name": "Kelsey Hightower", "known_for": "Kubernetes advocate"},
+    {"username": "fat", "name": "Jacob Thornton", "known_for": "Bootstrap co-creator"}
+  ],
+  "poll_templates": [
+    "Who is the better {category}: {user1} or {user2}?",
+    "Best {category}: {user1}, {user2}, or {user3}?",
+    "{category} showdown: {user1} vs {user2}",
+    "Most influential {category}: {user1}, {user2}, or {user3}?",
+    "Who built better {category}: {user1} or {user2}?"
+  ]
+}

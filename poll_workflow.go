@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"time"
 
@@ -162,9 +161,9 @@ func PollWorkflow(ctx workflow.Context, config PollConfig) (PollSummary, error) 
 		workflowID := workflow.GetInfo(ctx).WorkflowExecution.ID
 
 		paymentInput := WaitForPaymentInput{
-			ForohtooServerURL: os.Getenv("FOROHTOO_SERVER_URL"),
+			ForohtooServerURL: appConfig.ForohtooServerURL,
 			PaymentWallet:     config.PaymentWallet,
-			Network:           getEnvOrDefault("SOLANA_NETWORK", "mainnet"),
+			Network:           appConfig.SolanaNetwork,
 			WorkflowID:        workflowID,
 			ExpectedAmount:    config.PaymentAmount,
 			AssetType:         "spl-token",
@@ -264,10 +263,3 @@ func PollWorkflow(ctx workflow.Context, config PollConfig) (PollSummary, error) 
 	return summary, nil
 }
 
-// getEnvOrDefault returns the environment variable value or a default if not set
-func getEnvOrDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}

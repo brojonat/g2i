@@ -9,7 +9,6 @@ import (
 	"image/jpeg"
 	"image/png"
 	"log/slog"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -64,7 +63,9 @@ func GenerateResponsesTurnActivity(ctx context.Context, input GenerateResponsesT
 }
 
 func executeGhCommand(ctx context.Context, command string) (string, error) {
-	cmd := exec.CommandContext(ctx, "gh", strings.Fields(command)...)
+	// Use sh -c to properly handle quoted strings in the command
+	fullCommand := "gh " + command
+	cmd := exec.CommandContext(ctx, "sh", "-c", fullCommand)
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &out
@@ -150,9 +151,9 @@ type GenerateContentOutput struct {
 
 // GenerateContent uses a frontier model to generate content and optionally convert it
 func GenerateContent(ctx context.Context, prompt, modelName, imageFormat string, imageWidth, imageHeight int) (GenerationResult, error) {
-	apiKey := os.Getenv("GOOGLE_API_KEY")
+	apiKey := appConfig.GoogleAPIKey
 	if apiKey == "" {
-		return GenerationResult{}, fmt.Errorf("GOOGLE_API_KEY environment variable not set")
+		return GenerationResult{}, fmt.Errorf("GOOGLE_API_KEY not configured")
 	}
 
 	// Initialize Gemini client. It will use the GOOGLE_API_KEY environment variable if it is set.
@@ -242,7 +243,7 @@ func CopyObject(ctx context.Context, input CopyObjectInput) error {
 	logger := activity.GetLogger(ctx)
 	logger.Info("Copying object", "from", input.SourceKey, "to", input.DestinationKey)
 
-	storage := NewObjectStorage(input.StorageProvider)
+	storage := NewObjectStorage(appConfig)
 
 	err := storage.Copy(ctx, input.SourceBucket, input.SourceKey, input.DestinationBucket, input.DestinationKey)
 	if err != nil {
@@ -275,7 +276,7 @@ func StoreContent(ctx context.Context, data []byte, provider, bucket, key, keyPr
 	}
 
 	// Create storage instance
-	storage := NewObjectStorage(provider)
+	storage := NewObjectStorage(appConfig)
 
 	// Store the content
 	publicURL, err := storage.Store(ctx, data, bucket, key, contentType)
@@ -318,8 +319,7 @@ func WaitForPayment(ctx context.Context, input WaitForPaymentInput) (WaitForPaym
 	cl := client.NewClient(input.ForohtooServerURL, nil, slog.Default())
 
 	// Register the wallet to track the specific asset (token mint)
-	// NOTE: the current implementation of the forohtoo client requires a poll interval of at least 1 minute
-	err := cl.RegisterAsset(ctx, input.PaymentWallet, input.Network, input.AssetType, input.TokenMint, 1*time.Minute)
+	err := cl.RegisterAsset(ctx, input.PaymentWallet, input.Network, input.AssetType, input.TokenMint)
 	if err != nil {
 		logger.Error("Failed to register wallet asset", "error", err, "assetType", input.AssetType, "tokenMint", input.TokenMint)
 		return WaitForPaymentOutput{}, fmt.Errorf("failed to register wallet asset: %w", err)
@@ -331,7 +331,10 @@ func WaitForPayment(ctx context.Context, input WaitForPaymentInput) (WaitForPaym
 		// 1 USDC = 1,000,000 micro-USDC (6 decimals)
 		expectedAmountInSmallestUnit := int64(input.ExpectedAmount * 1_000_000)
 		// Check if the transaction memo contains the workflow ID and amount matches
-		return strings.Contains(txn.Memo, input.WorkflowID) && txn.Amount == expectedAmountInSmallestUnit
+		if txn.Memo == nil {
+			return false
+		}
+		return strings.Contains(*txn.Memo, input.WorkflowID) && txn.Amount == expectedAmountInSmallestUnit
 	})
 
 	if err != nil {
@@ -341,10 +344,15 @@ func WaitForPayment(ctx context.Context, input WaitForPaymentInput) (WaitForPaym
 
 	logger.Info("Payment received", "transactionID", txn.Signature, "amount", txn.Amount)
 
+	memo := ""
+	if txn.Memo != nil {
+		memo = *txn.Memo
+	}
+
 	return WaitForPaymentOutput{
 		TransactionID: txn.Signature,
 		Amount:        float64(txn.Amount),
-		Memo:          txn.Memo,
+		Memo:          memo,
 	}, nil
 }
 

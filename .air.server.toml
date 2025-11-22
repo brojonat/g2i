@@ -1,0 +1,18 @@
+# .air.server.toml - Hot reload config for server
+root = "."
+tmp_dir = "bin-server"
+
+[build]
+cmd = "go build -gcflags=\"all=-N -l\" -o ./bin-server/app ."
+delay = 1000
+exclude_dir = ["bin", "bin-server", "bin-worker"]
+full_bin = "bash -c 'source .env.dev && export S3_PUBLIC_ENDPOINT=$(./scripts/set-dev-endpoint.sh 2>/dev/null || echo localhost:9000) && echo \"📍 S3_PUBLIC_ENDPOINT=$S3_PUBLIC_ENDPOINT\" && ./bin-server/app server'"
+include_ext = ["go", "html"]
+kill_delay = 2000
+stop_on_error = true
+
+[log]
+time = true
+
+[misc]
+clean_on_exit = false
