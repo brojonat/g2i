@@ -6,12 +6,6 @@ cloud.google.com/go/auth v0.9.3/go.mod h1:7z6VY+7h3KUdRov5F1i8NDP5ZzWKYmEPO842Bg
 cloud.google.com/go/compute/metadata v0.7.0 h1:PBWF+iiAerVNe8UCHxdOt6eHLVc3ydFeOCw78U8ytSU=
 cloud.google.com/go/compute/metadata v0.7.0/go.mod h1:j5MvL9PprKL39t166CoB1uVHfQMs4tFQZZcKwksXUjo=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/brojonat/forohtoo v0.0.0-20251023043822-c82f028be48b h1:wO2GGfwbtpi78TEYvtTMEmFaEvyDUULHRmxAykef384=
-github.com/brojonat/forohtoo v0.0.0-20251023043822-c82f028be48b/go.mod h1:OZiQXPcc2fZATxh8uudl0djDbvyZis8N2mx2JtcPAoY=
-github.com/brojonat/forohtoo v0.0.0-20251024021630-bdb8d687d86b h1:LbiHHi8yXHuQAV4ZEDQdkRgPgReN67/g1WlSvD416oQ=
-github.com/brojonat/forohtoo v0.0.0-20251024021630-bdb8d687d86b/go.mod h1:OZiQXPcc2fZATxh8uudl0djDbvyZis8N2mx2JtcPAoY=
-github.com/brojonat/forohtoo v0.0.0-20251115224914-a5a588b88dfb h1:+DTU1lM6h+f6ycF85ZEwm34Ml6u90xS3cTRGpMxZ2Vk=
-github.com/brojonat/forohtoo v0.0.0-20251115224914-a5a588b88dfb/go.mod h1:6EBCM2Uxgx+kKw5DpgFfmPEXvA2NTvuE6hDwp1Ewvug=
 github.com/brojonat/forohtoo v0.0.0-20251119163256-8d36aa52277b h1:G+G880GPaPXpC8K1r1nLxenlEJwG8savwnjaH8+mCpM=
 github.com/brojonat/forohtoo v0.0.0-20251119163256-8d36aa52277b/go.mod h1:6EBCM2Uxgx+kKw5DpgFfmPEXvA2NTvuE6hDwp1Ewvug=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
