@@ -1056,7 +1056,7 @@ func (s *APIServer) handleGetPaymentPending() http.Handler {
 		// Payment not yet confirmed - return a spinner container that keeps polling
 		// We replace the entire poll-content div to stop the 10s parent polling
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<div id="poll-content-%s" class="container mx-auto px-4 py-8" hx-get="/poll/%s/payment-pending" hx-trigger="every 2s" hx-swap="outerHTML">
+		fmt.Fprintf(w, `<div id="poll-content-%s" class="container mx-auto px-4 py-8" hx-get="/poll/%s/payment-pending" hx-trigger="every 10s" hx-swap="outerHTML">
 	<div class="flex flex-col items-center py-16">
 		<div class="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500 mb-4"></div>
 		<p class="text-gray-300 text-lg">Waiting for payment confirmation...</p>
