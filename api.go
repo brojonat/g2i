@@ -206,6 +206,7 @@ func (s *APIServer) SetupRoutes() *APIServer {
 	mux.Handle("DELETE /poll/{id}", s.handleDeletePoll())
 	mux.Handle("GET /poll/{id}/profile/{option}", s.handleGetPollProfile())
 	mux.Handle("GET /poll/{id}/votes/{option}", s.handleGetPollVotes())
+	mux.Handle("GET /poll/{id}/payment-pending", s.handleGetPaymentPending())
 
 	// Visualization routes
 	mux.Handle("GET /visualization-form", s.handleGetVisualizationForm())
@@ -838,7 +839,8 @@ func (s *APIServer) handleGetPollDetails() http.Handler {
 				s.writeNotFound(w, r, "Poll not found")
 				return
 			}
-			s.writeInternalError(w, r, err.Error())
+			s.logger.Error("failed to query poll config", "workflow_id", workflowID, "error", err)
+			s.writeInternalError(w, r, "Poll is no longer available")
 			return
 		}
 
@@ -849,7 +851,8 @@ func (s *APIServer) handleGetPollDetails() http.Handler {
 				s.writeNotFound(w, r, "Poll not found")
 				return
 			}
-			s.writeInternalError(w, r, err.Error())
+			s.logger.Error("failed to query poll options", "workflow_id", workflowID, "error", err)
+			s.writeInternalError(w, r, "Poll is no longer available")
 			return
 		}
 
@@ -860,7 +863,8 @@ func (s *APIServer) handleGetPollDetails() http.Handler {
 				s.writeNotFound(w, r, "Poll not found")
 				return
 			}
-			s.writeInternalError(w, r, err.Error())
+			s.logger.Error("failed to query poll state", "workflow_id", workflowID, "error", err)
+			s.writeInternalError(w, r, "Poll is no longer available")
 			return
 		}
 
@@ -1020,6 +1024,45 @@ func (s *APIServer) handleGetPollVotes() http.Handler {
 			s.logger.Error("failed to render template", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
+	})
+}
+
+// handleGetPaymentPending returns a spinner partial that polls until payment is confirmed.
+func (s *APIServer) handleGetPaymentPending() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		workflowID := r.PathValue("id")
+		if len(workflowID) > MaxWorkflowIDLength {
+			s.writeBadRequest(w, r, "Invalid poll ID.")
+			return
+		}
+
+		// Query the poll state to check if payment has been confirmed
+		state, err := QueryPollWorkflow[PollState](s.temporalClient, workflowID, "get_state")
+		if err != nil {
+			s.logger.Error("failed to query poll state for payment pending", "workflow_id", workflowID, "error", err)
+			// On error, redirect back to poll page which will show appropriate error
+			w.Header().Set("HX-Redirect", "/poll/"+workflowID)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// If payment has been confirmed, redirect to the poll page
+		if state.PaymentPaid {
+			w.Header().Set("HX-Redirect", "/poll/"+workflowID)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Payment not yet confirmed - return a spinner container that keeps polling
+		// We replace the entire poll-content div to stop the 10s parent polling
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<div id="poll-content-%s" class="container mx-auto px-4 py-8" hx-get="/poll/%s/payment-pending" hx-trigger="every 2s" hx-swap="outerHTML">
+	<div class="flex flex-col items-center py-16">
+		<div class="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-500 mb-4"></div>
+		<p class="text-gray-300 text-lg">Waiting for payment confirmation...</p>
+		<p class="text-gray-500 text-sm mt-2">This may take a few moments</p>
+	</div>
+</div>`, workflowID, workflowID)
 	})
 }
 
