@@ -83,7 +83,7 @@ func AgenticScrapeGitHubProfileWorkflow(ctx workflow.Context, prompt string) (Gi
 
 	previousResponseID := ""
 	pendingOutputs := map[string]string{}
-	maxTurns := 20
+	maxTurns := 25
 	var githubProfile GitHubProfile
 
 	for i := 0; i < maxTurns; i++ {
